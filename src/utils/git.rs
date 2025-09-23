@@ -16,13 +16,14 @@ pub fn local_branch_exists(repo: &Repository, branch_name: &str) -> Result<bool>
     }
 }
 
-/// Check if a branch exists on remote by attempting to fetch it
+/// Check if a branch exists on remote without fetching it
 pub fn remote_branch_exists(branch_name: &str) -> Result<bool> {
     let output = Command::new("git")
-        .args(["fetch", "origin", branch_name])
+        .args(["ls-remote", "--heads", "origin", branch_name])
         .output()?;
 
-    Ok(output.status.success())
+    // If output is not empty, the branch exists
+    Ok(!output.stdout.is_empty())
 }
 
 /// Execute git checkout with the given arguments
