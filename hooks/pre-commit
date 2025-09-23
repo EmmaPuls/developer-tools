@@ -1,0 +1,26 @@
+#!/bin/bash
+# Pre-commit hook for devtools development
+# Copy this to .git/hooks/pre-commit and make executable
+
+echo "🔍 Running pre-commit checks for devtools..."
+
+# Fast compilation check
+if ! cargo check --quiet; then
+    echo "❌ Rust compilation failed"
+    exit 1
+fi
+
+# Run tests
+if ! cargo test --quiet; then
+    echo "❌ Tests failed"
+    exit 1
+fi
+
+# Quick rebuild and install for immediate use
+if make dev > /dev/null 2>&1; then
+    echo "✅ devtools rebuilt and installed"
+else
+    echo "⚠️  Failed to rebuild devtools, but tests passed"
+fi
+
+echo "✅ Pre-commit checks passed"
