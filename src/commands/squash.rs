@@ -21,8 +21,11 @@ pub fn execute(count: u32, message: Option<String>, dry_run: bool, commit_args: 
 
     // Show additional commit options if any
     if !commit_args.is_empty() {
-        println!("\n{}Additional commit options:{} {}", 
-                style("Additional commit options:").bold(), "", commit_args.join(" "));
+        let additional_commit_options = "Additional commit options:";
+        println!("\n{} {}",
+            style(additional_commit_options).bold(),
+            commit_args.join(" ")
+        );
     }
 
     println!("\n{}Commit message:{} {}", 
