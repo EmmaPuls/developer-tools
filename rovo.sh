@@ -11,8 +11,8 @@ case "$1" in
         fi
         ;;
     *)
-        # Fall back to original rovo command if it exists
-        if command -v rovo >/dev/null 2>&1; then
+        # Fall back to original acli rovodev command if it exists
+        if command -v acli >/dev/null 2>&1; then
             command acli rovodev "$@"
         else
             echo "Usage: rovo [login|...]"

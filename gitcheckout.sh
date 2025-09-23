@@ -7,14 +7,12 @@ if [[ "$1" == "-b" ]]; then
 fi
 
 # Extract the branch name (last argument that doesn't start with -)
-branch_name=""
+local branch_name=""
 for arg in "$@"; do
     if [[ "$arg" != -* ]]; then
         branch_name="$arg"
     fi
 done
-
-# Get the default branch name of the remote repository
 
 # Use Git Fetch to check if the branch exists on the remote
 if git fetch origin "$branch_name" &>/dev/null; then
