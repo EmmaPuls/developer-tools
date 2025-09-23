@@ -1,0 +1,25 @@
+[package]
+name = "dt"
+version = "0.1.0"
+edition = "2021"
+description = "Git and development workflow tools"
+authors = ["Your Name <your.email@example.com>"]
+
+[profile.dev]
+opt-level = 1  # Faster compilation during development
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+git2 = "0.18"
+console = "0.15"
+dialoguer = "0.11"
+anyhow = "1.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+tempfile = "3.0"
+predicates = "3.0"
