@@ -10,7 +10,7 @@ enum RovoCommands {
 mod commands;
 mod utils;
 
-use commands::{checkout, rovo, squash};
+use commands::{checkout, rovo, squash, duplicate};
 
 #[derive(Parser)]
 #[command(name = "dt")]
@@ -51,6 +51,17 @@ enum Commands {
         #[arg(last = true)]
         commit_args: Vec<String>,
     },
+    /// Undo last x commits and stash each one with its commit message
+    Duplicate {
+        /// Number of commits to undo and stash
+        num_commits: u32,
+        /// Enable debug logging
+        #[arg(short, long)]
+        verbose: bool,
+        /// Skip stashing stage and go directly to branch creation
+        #[arg(long)]
+        no_stash: bool,
+    },
     /// Rovo CLI wrapper with authentication
     Rovo {
         #[command(subcommand)]
@@ -70,6 +81,9 @@ fn main() -> Result<()> {
         }
         Commands::Squash { count, message, dry_run, commit_args } => {
             squash::execute(count, message, dry_run, commit_args)?;
+        }
+        Commands::Duplicate { num_commits, verbose, no_stash } => {
+            duplicate::execute(num_commits, verbose, no_stash)?;
         }
         Commands::Rovo { command, args } => {
             let rovo_cmd = command.map(|c| match c {
