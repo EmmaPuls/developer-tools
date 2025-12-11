@@ -61,6 +61,9 @@ enum Commands {
         /// Skip stashing stage and go directly to branch creation
         #[arg(long)]
         no_stash: bool,
+        /// Skip git hooks when creating commits
+        #[arg(long)]
+        no_verify: bool,
     },
     /// Rovo CLI wrapper with authentication
     Rovo {
@@ -82,8 +85,8 @@ fn main() -> Result<()> {
         Commands::Squash { count, message, dry_run, commit_args } => {
             squash::execute(count, message, dry_run, commit_args)?;
         }
-        Commands::Duplicate { num_commits, verbose, no_stash } => {
-            duplicate::execute(num_commits, verbose, no_stash)?;
+        Commands::Duplicate { num_commits, verbose, no_stash, no_verify } => {
+            duplicate::execute(num_commits, verbose, no_stash, no_verify)?;
         }
         Commands::Rovo { command, args } => {
             let rovo_cmd = command.map(|c| match c {

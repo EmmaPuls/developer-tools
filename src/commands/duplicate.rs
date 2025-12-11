@@ -5,7 +5,7 @@ use regex::Regex;
 use std::process::Command;
 
 /// Execute the duplicate-stack command
-pub fn execute(num_commits: u32, verbose: bool, no_stash: bool) -> Result<()> {
+pub fn execute(num_commits: u32, verbose: bool, no_stash: bool, no_verify: bool) -> Result<()> {
     // Ensure we're in a git repository
     let _repo = git::ensure_git_repo()?;
 
@@ -33,6 +33,51 @@ pub fn execute(num_commits: u32, verbose: bool, no_stash: bool) -> Result<()> {
         return Err(anyhow!("Not enough commits"));
     }
     debug_log(verbose, "✓ Sufficient commits available");
+
+    // Get current branch name
+    debug_log(verbose, "Retrieving current branch name");
+    let current_branch = get_current_branch()?;
+    debug_log(verbose, &format!("Current branch: {}", current_branch));
+
+    // Suggest new branch name
+    let suggested_branch_name = format!("{}-new", current_branch);
+    debug_log(verbose, &format!("Suggested branch name: {}", suggested_branch_name));
+
+    println!();
+    println!("Ready to create a new branch.");
+    println!();
+
+    // Prompt user for branch name
+    let user_branch_name: String = Input::new()
+        .with_prompt(format!("Enter new branch name (default: {})", suggested_branch_name))
+        .allow_empty(true)
+        .interact_text()?;
+
+    // Use suggested name if user just pressed Enter
+    let branch_name = if user_branch_name.is_empty() {
+        debug_log(verbose, &format!("User pressed Enter, using suggested branch name: {}", suggested_branch_name));
+        suggested_branch_name
+    } else {
+        debug_log(verbose, &format!("User entered custom branch name: {}", user_branch_name));
+        user_branch_name
+    };
+
+    // Validate that branch name has stack/ prefix
+    debug_log(verbose, "Validating branch name has 'stack/' prefix");
+    if !branch_name.starts_with("stack/") {
+        ui::error(&format!("Branch name must start with 'stack/' prefix. Provided: {}", branch_name));
+        return Err(anyhow!("Invalid branch name format"));
+    }
+    debug_log(verbose, "✓ Branch name validation passed");
+
+    println!();
+    println!("Creating new branch: {}", branch_name);
+    debug_log(verbose, &format!("Executing: git checkout -b {}", branch_name));
+
+    create_new_branch(&branch_name)?;
+    debug_log(verbose, "✓ New branch created successfully");
+
+    ui::success(&format!("Successfully created branch: {}", branch_name));
 
     let mut commit_messages = Vec::new();
 
@@ -94,51 +139,6 @@ pub fn execute(num_commits: u32, verbose: bool, no_stash: bool) -> Result<()> {
         ui::info("Skipping stashing stage...");
     }
 
-    // Get current branch name
-    debug_log(verbose, "Retrieving current branch name");
-    let current_branch = get_current_branch()?;
-    debug_log(verbose, &format!("Current branch: {}", current_branch));
-
-    // Suggest new branch name
-    let suggested_branch_name = format!("{}-new", current_branch);
-    debug_log(verbose, &format!("Suggested branch name: {}", suggested_branch_name));
-
-    println!();
-    println!("Ready to create a new branch.");
-    println!();
-
-    // Prompt user for branch name
-    let user_branch_name: String = Input::new()
-        .with_prompt(format!("Enter new branch name (default: {})", suggested_branch_name))
-        .allow_empty(true)
-        .interact_text()?;
-
-    // Use suggested name if user just pressed Enter
-    let branch_name = if user_branch_name.is_empty() {
-        debug_log(verbose, &format!("User pressed Enter, using suggested branch name: {}", suggested_branch_name));
-        suggested_branch_name
-    } else {
-        debug_log(verbose, &format!("User entered custom branch name: {}", user_branch_name));
-        user_branch_name
-    };
-
-    // Validate that branch name has stack/ prefix
-    debug_log(verbose, "Validating branch name has 'stack/' prefix");
-    if !branch_name.starts_with("stack/") {
-        ui::error(&format!("Branch name must start with 'stack/' prefix. Provided: {}", branch_name));
-        return Err(anyhow!("Invalid branch name format"));
-    }
-    debug_log(verbose, "✓ Branch name validation passed");
-
-    println!();
-    println!("Creating new branch: {}", branch_name);
-    debug_log(verbose, &format!("Executing: git checkout -b {}", branch_name));
-
-    create_new_branch(&branch_name)?;
-    debug_log(verbose, "✓ New branch created successfully");
-
-    ui::success(&format!("Successfully created branch: {}", branch_name));
-
     // Now pop stashes and recreate commits with cleaned messages
     if !no_stash {
         println!();
@@ -170,7 +170,7 @@ pub fn execute(num_commits: u32, verbose: bool, no_stash: bool) -> Result<()> {
             let cleaned_msg = &cleaned_messages[idx];
             println!("[{}/{}] Creating commit: {}", iteration, num_commits, cleaned_msg);
             debug_log(verbose, &format!("[{}/{}] Executing: git commit -m \"{}\"", iteration, num_commits, cleaned_msg));
-            create_commit(cleaned_msg)?;
+            create_commit(cleaned_msg, no_verify)?;
             debug_log(verbose, &format!("[{}/{}] ✓ Commit created", iteration, num_commits));
             println!("  ✓ Created commit: {}", cleaned_msg);
             println!();
@@ -345,9 +345,14 @@ fn stage_all_changes() -> Result<()> {
 }
 
 /// Create a commit with the given message
-fn create_commit(message: &str) -> Result<()> {
+fn create_commit(message: &str, no_verify: bool) -> Result<()> {
+    let mut args = vec!["commit", "-m", message];
+    if no_verify {
+        args.push("--no-verify");
+    }
+
     let status = Command::new("ag")
-        .args(["commit", "-m", message])
+        .args(&args)
         .status()?;
 
     if !status.success() {
@@ -711,7 +716,7 @@ mod tests {
             stage_all_changes().unwrap();
             
             // Create commit
-            create_commit("Test commit message").unwrap();
+            create_commit("Test commit message", false).unwrap();
             
             // Verify commit was created
             let message = get_current_commit_message().unwrap();
