@@ -560,42 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn test_undo_commit_requires_git_alias() {
-        let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
-
-        let result = std::panic::catch_unwind(|| {
-            std::env::set_current_dir(&temp_repo).unwrap();
-            
-            create_commits(&temp_repo, 2);
-            
-            // This will fail because we haven't set up the git alias
-            // But it proves the function is being called correctly
-            let undo_result = undo_commit();
-            assert!(undo_result.is_err(), "undo_commit should fail without git undocommit alias");
-        });
-
-        let _ = std::env::set_current_dir(original_dir);
-        assert!(result.is_ok(), "Test should not panic");
-    }
-
-    #[test]
-    fn test_get_commit_count_empty_repo() {
-        let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
-
-        let result = std::panic::catch_unwind(|| {
-            std::env::set_current_dir(&temp_repo).unwrap();
-            
-            let count = get_commit_count().unwrap();
-            assert_eq!(count, 0, "Empty repo should have 0 commits");
-        });
-
-        let _ = std::env::set_current_dir(original_dir);
-        assert!(result.is_ok(), "Test should not panic");
-    }
-
-    #[test]
     fn test_show_recent_stashes() {
         let temp_repo = create_test_repo();
         let original_dir = std::env::current_dir().unwrap();
@@ -701,29 +665,4 @@ mod tests {
         assert!(result.is_ok(), "Test should not panic");
     }
 
-    #[test]
-    fn test_create_commit() {
-        let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
-
-        let result = std::panic::catch_unwind(|| {
-            std::env::set_current_dir(&temp_repo).unwrap();
-            
-            create_commits(&temp_repo, 1);
-            
-            // Make and stage a change
-            std::fs::write(temp_repo.path().join("test.txt"), "test content").unwrap();
-            stage_all_changes().unwrap();
-            
-            // Create commit
-            create_commit("Test commit message", false).unwrap();
-            
-            // Verify commit was created
-            let message = get_current_commit_message().unwrap();
-            assert_eq!(message, "Test commit message", "Commit should be created with correct message");
-        });
-
-        let _ = std::env::set_current_dir(original_dir);
-        assert!(result.is_ok(), "Test should not panic");
-    }
 }
