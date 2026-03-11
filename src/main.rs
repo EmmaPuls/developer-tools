@@ -1,5 +1,5 @@
-use clap::{Parser, Subcommand};
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 
 #[derive(Subcommand)]
 enum RovoCommands {
@@ -10,7 +10,7 @@ enum RovoCommands {
 mod commands;
 mod utils;
 
-use commands::{checkout, rovo, squash};
+use commands::{checkout, fixup, rovo, squash};
 
 #[derive(Parser)]
 #[command(name = "dt")]
@@ -59,16 +59,37 @@ enum Commands {
         #[arg(trailing_var_arg = true)]
         args: Vec<String>,
     },
+    /// Manage the stack fixup workflow
+    Fixup {
+        #[command(subcommand)]
+        command: Option<FixupSubcommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum FixupSubcommand {
+    /// Initialize or update the fixup configuration file
+    Init,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Checkout { branch, branch_flag, dry_run, git_args } => {
+        Commands::Checkout {
+            branch,
+            branch_flag,
+            dry_run,
+            git_args,
+        } => {
             checkout::execute(branch, branch_flag, dry_run, git_args)?;
         }
-        Commands::Squash { count, message, dry_run, commit_args } => {
+        Commands::Squash {
+            count,
+            message,
+            dry_run,
+            commit_args,
+        } => {
             squash::execute(count, message, dry_run, commit_args)?;
         }
         Commands::Rovo { command, args } => {
@@ -77,6 +98,10 @@ fn main() -> Result<()> {
             });
             rovo::execute(rovo_cmd, args)?;
         }
+        Commands::Fixup { command } => match command {
+            Some(FixupSubcommand::Init) => fixup::run_init()?,
+            None => fixup::run_fixup()?,
+        },
     }
 
     Ok(())

@@ -151,8 +151,8 @@ toolPermissions:
 
 announcementTracking:
   announcementViewCounts:
-    915dee9bec676adabc1d0dcd1f637ce0: 1
-    ca393c3ddd928e7f11e5924fa5f785db: 1
+    915dee9bec676adabc1d0dcd1f637ce0: 2
+    ca393c3ddd928e7f11e5924fa5f785db: 2
 
 sessionFeedback:
   permanentlyDisabled: true
