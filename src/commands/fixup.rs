@@ -36,11 +36,11 @@ impl Default for FixupOptions {
             pull_request_keyword: "Pull Request".to_string(),
             acli_message: "Look at the staged changes in git and provide a commit message that would be appropriate for these changes. The message should be concise but descriptive, ideally starting with a verb in the present tense.".to_string(),
             acli_output_file:
-                "/Users/epuls/.local/bin/scripts/newScript/acli_rovodev_output.json".to_string(),
+                "../fixup/resources/acli_rovodev_output.json".to_string(),
             acli_output_schema:
-                "/Users/epuls/.local/bin/scripts/newScript/acli_schema.json".to_string(),
+                "../fixup/resources/acli_schema.json".to_string(),
             acli_config_file:
-                "/Users/epuls/.local/bin/scripts/newScript/config.ag-stack.yml".to_string(),
+                "../fixup/resources/config.ag-stack.yml".to_string(),
             stack_log_limit: 10,
             verbose: false,
             default_message: "Update stack commit".to_string(),
