@@ -1,33 +1,33 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
-use tempfile::TempDir;
-use std::process::Command as StdCommand;
 use std::fs;
+use std::process::Command as StdCommand;
+use tempfile::TempDir;
 
 /// Helper to create a temporary git repository for testing
 fn create_test_git_repo() -> TempDir {
     let temp_dir = tempfile::tempdir().unwrap();
-    
+
     // Initialize git repo
     StdCommand::new("git")
         .args(["init"])
         .current_dir(&temp_dir)
         .output()
         .unwrap();
-    
+
     // Configure git for testing
     StdCommand::new("git")
         .args(["config", "user.name", "Test User"])
         .current_dir(&temp_dir)
         .output()
         .unwrap();
-    
+
     StdCommand::new("git")
         .args(["config", "user.email", "test@example.com"])
         .current_dir(&temp_dir)
         .output()
         .unwrap();
-    
+
     // Create initial commit
     std::fs::write(temp_dir.path().join("README.md"), "# Test repo").unwrap();
     StdCommand::new("git")
@@ -35,13 +35,13 @@ fn create_test_git_repo() -> TempDir {
         .current_dir(&temp_dir)
         .output()
         .unwrap();
-    
+
     StdCommand::new("git")
         .args(["commit", "-m", "Initial commit"])
         .current_dir(&temp_dir)
         .output()
         .unwrap();
-    
+
     temp_dir
 }
 
@@ -52,7 +52,9 @@ fn test_help_commands() {
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Git and development workflow tools"));
+        .stdout(predicate::str::contains(
+            "Git and development workflow tools",
+        ));
 
     // Test checkout help
     let mut cmd = Command::cargo_bin("dt").unwrap();
@@ -79,7 +81,7 @@ fn test_help_commands() {
 #[test]
 fn test_checkout_dry_run() {
     let temp_repo = create_test_git_repo();
-    
+
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["checkout", "test-branch", "--dry-run"])
         .current_dir(&temp_repo)
@@ -92,14 +94,16 @@ fn test_checkout_dry_run() {
 #[test]
 fn test_checkout_with_b_flag_dry_run() {
     let temp_repo = create_test_git_repo();
-    
+
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["checkout", "-b", "new-feature", "--dry-run"])
         .current_dir(&temp_repo)
         .assert()
         .success()
         .stdout(predicate::str::contains("[DRY RUN]"))
-        .stdout(predicate::str::contains("Would execute: git checkout -b new-feature"));
+        .stdout(predicate::str::contains(
+            "Would execute: git checkout -b new-feature",
+        ));
 }
 
 #[test]
@@ -118,21 +122,21 @@ fn test_squash_with_message_dry_run() {
     cmd.args(["squash", "2", "-m", "Test message", "--dry-run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Would use commit message: 'Test message'"));
+        .stdout(predicate::str::contains(
+            "Would use commit message: 'Test message'",
+        ));
 }
 
 #[test]
 fn test_rovo_basic() {
     let mut cmd = Command::cargo_bin("dt").unwrap();
-    cmd.args(["rovo", "--help"])
-        .assert()
-        .success();
+    cmd.args(["rovo", "--help"]).assert().success();
 }
 
 #[test]
 fn test_checkout_real_scenarios() {
     let temp_repo = create_test_git_repo();
-    
+
     // Test creating a new local branch (dry run first to avoid hanging)
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["checkout", "new-feature", "--dry-run"])
@@ -145,7 +149,7 @@ fn test_checkout_real_scenarios() {
 #[test]
 fn test_checkout_with_b_flag() {
     let temp_repo = create_test_git_repo();
-    
+
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["checkout", "-b", "feature-branch"])
         .current_dir(&temp_repo)
@@ -153,10 +157,10 @@ fn test_checkout_with_b_flag() {
         .success();
 }
 
-#[test] 
+#[test]
 fn test_checkout_not_in_git_repo() {
     let temp_dir = tempfile::tempdir().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["checkout", "some-branch"])
         .current_dir(&temp_dir)
@@ -168,7 +172,7 @@ fn test_checkout_not_in_git_repo() {
 #[test]
 fn test_squash_not_in_git_repo() {
     let temp_dir = tempfile::tempdir().unwrap();
-    
+
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["squash", "2"])
         .current_dir(&temp_dir)
@@ -180,7 +184,7 @@ fn test_squash_not_in_git_repo() {
 #[test]
 fn test_squash_with_message() {
     let temp_repo = create_test_git_repo();
-    
+
     // Create additional commits for squashing
     fs::write(temp_repo.path().join("file1.txt"), "content1").unwrap();
     StdCommand::new("git")
@@ -193,7 +197,7 @@ fn test_squash_with_message() {
         .current_dir(&temp_repo)
         .output()
         .unwrap();
-        
+
     fs::write(temp_repo.path().join("file2.txt"), "content2").unwrap();
     StdCommand::new("git")
         .args(["add", "file2.txt"])
@@ -205,7 +209,7 @@ fn test_squash_with_message() {
         .current_dir(&temp_repo)
         .output()
         .unwrap();
-    
+
     // Test dry run with commits to squash
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["squash", "2", "-m", "Combined commits", "--dry-run"])
@@ -229,29 +233,25 @@ fn test_rovo_no_args() {
 fn test_invalid_args() {
     // Test invalid subcommand
     let mut cmd = Command::cargo_bin("dt").unwrap();
-    cmd.arg("invalid")
-        .assert()
-        .failure();
-        
+    cmd.arg("invalid").assert().failure();
+
     // Test missing squash count
     let mut cmd = Command::cargo_bin("dt").unwrap();
-    cmd.arg("squash")
-        .assert()
-        .failure();
+    cmd.arg("squash").assert().failure();
 }
 
 #[test]
 fn test_version_and_help() {
     // Test version
     let mut cmd = Command::cargo_bin("dt").unwrap();
-    cmd.arg("--version")
-        .assert()
-        .success();
-        
+    cmd.arg("--version").assert().success();
+
     // Test main help
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Git and development workflow tools"));
+        .stdout(predicate::str::contains(
+            "Git and development workflow tools",
+        ));
 }

@@ -13,11 +13,15 @@ lto = true
 codegen-units = 1
 
 [dependencies]
-clap = { version = "4.0", features = ["derive"] }
-git2 = "0.18"
+clap = { version = "4.0", features = ["derive", "env"] }
+git2 = "0.20.4"
 console = "0.15"
 dialoguer = "0.11"
 anyhow = "1.0"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"

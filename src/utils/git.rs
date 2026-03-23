@@ -179,29 +179,29 @@ mod tests {
         // Test that functions can be called without panicking
         let temp_repo = create_test_repo();
         let original_dir = std::env::current_dir().unwrap();
-        
+
         // Use closure to ensure cleanup happens
         let test_result = std::panic::catch_unwind(|| {
             std::env::set_current_dir(&temp_repo).unwrap();
-            
+
             // Test git_checkout_new_branch with simple branch name
             let result = git_checkout_new_branch("simple-test", None);
             assert!(result.is_ok(), "Should create new branch");
-            
+
             // Test that we can call switch_to_local_branch (may fail, but shouldn't panic)
             let _result = switch_to_local_branch("simple-test");
-            
+
             // Test git_checkout with basic args
             let args = vec!["simple-test".to_string()];
             let _result = git_checkout(&args);
-            
+
             // Test remote_branch_exists safely
             let _result = remote_branch_exists("nonexistent");
         });
-        
+
         // Always restore directory
         let _ = std::env::set_current_dir(original_dir);
-        
+
         if test_result.is_err() {
             panic!("Test failed");
         }
@@ -212,27 +212,27 @@ mod tests {
         // Test error handling
         let temp_repo = create_test_repo();
         let original_dir = std::env::current_dir().unwrap();
-        
+
         let test_result = std::panic::catch_unwind(|| {
             std::env::set_current_dir(&temp_repo).unwrap();
-            
+
             // Test git_checkout_new_branch with invalid tracking
             let result = git_checkout_new_branch("error-test", Some("invalid/ref"));
             assert!(result.is_err(), "Should fail with invalid tracking branch");
-            
+
             // Test switch_to_local_branch with nonexistent branch
             let result = switch_to_local_branch("definitely-does-not-exist");
             assert!(result.is_err(), "Should fail for nonexistent branch");
-            
+
             // Test git_checkout with invalid arguments
             let invalid_args = vec!["--this-flag-does-not-exist".to_string()];
             let result = git_checkout(&invalid_args);
             assert!(result.is_err(), "Should fail with invalid args");
         });
-        
+
         // Always restore directory
         let _ = std::env::set_current_dir(original_dir);
-        
+
         if test_result.is_err() {
             panic!("Test failed");
         }
