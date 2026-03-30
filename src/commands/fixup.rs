@@ -69,7 +69,11 @@ pub fn run_fixup() -> Result<()> {
     let existing = read_config()?;
     let options = match existing {
         Some(cfg) => cfg,
-        None => prompt_and_write_config(ConfigInitMode::Auto, None)?,
+        None => {
+            ui::info("First-time setup: creating fixup resources directory");
+            setup_fixup_resources()?;
+            prompt_and_write_config(ConfigInitMode::Auto, None)?
+        }
     };
 
     execute(options)
@@ -78,6 +82,10 @@ pub fn run_fixup() -> Result<()> {
 /// Interactive config initialization accessible via `dt fixup init`.
 pub fn run_init() -> Result<()> {
     let existing = read_config()?;
+    
+    ui::info("Setting up fixup resources directory");
+    setup_fixup_resources()?;
+    
     prompt_and_write_config(ConfigInitMode::Manual, existing)?;
     ui::success(&format!(
         "Configuration stored at {}",
@@ -712,4 +720,34 @@ fn write_config_file(config: &FixupOptions) -> Result<()> {
 
 fn sanitize_value(value: &str) -> String {
     value.replace('\n', " ")
+}
+
+/// Set up the fixup resources directory and copy resource files
+fn setup_fixup_resources() -> Result<()> {
+    // Create the ../fixup/resources directory structure
+    let fixup_resources_dir = Path::new("../fixup/resources");
+    
+    ui::info(&format!("Creating directory: {}", fixup_resources_dir.display()));
+    fs::create_dir_all(fixup_resources_dir)
+        .with_context(|| format!("Failed to create directory {}", fixup_resources_dir.display()))?;
+    
+    // Copy resource files from src/resources to ../fixup/resources
+    let source_dir = Path::new("src/resources");
+    let resource_files = ["acli_schema.json", "config.ag-stack.yml"];
+    
+    for file in &resource_files {
+        let source_path = source_dir.join(file);
+        let dest_path = fixup_resources_dir.join(file);
+        
+        if source_path.exists() {
+            ui::info(&format!("Copying {} to {}", source_path.display(), dest_path.display()));
+            fs::copy(&source_path, &dest_path)
+                .with_context(|| format!("Failed to copy {} to {}", source_path.display(), dest_path.display()))?;
+        } else {
+            ui::info(&format!("Warning: Source file {} not found, skipping", source_path.display()));
+        }
+    }
+    
+    ui::success("Fixup resources directory set up successfully");
+    Ok(())
 }
