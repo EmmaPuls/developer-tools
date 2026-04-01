@@ -146,10 +146,10 @@ mod tests {
     #[test]
     fn test_local_branch_exists() {
         let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
-        std::env::set_current_dir(&temp_repo).unwrap();
 
-        let repo = ensure_git_repo().unwrap();
+        // Open the repo directly by path — avoids mutating the process working directory
+        // (which is shared across parallel tests and causes flaky failures).
+        let repo = git2::Repository::open(temp_repo.path()).unwrap();
 
         // Get the actual default branch name from git
         let output = StdCommand::new("git")
@@ -170,8 +170,6 @@ mod tests {
         // Test non-existing branch
         let exists_nonexistent = local_branch_exists(&repo, "nonexistent-branch").unwrap();
         assert!(!exists_nonexistent);
-
-        std::env::set_current_dir(original_dir).unwrap();
     }
 
     #[test]
