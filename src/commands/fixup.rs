@@ -14,6 +14,9 @@ use crate::utils::{git, ui};
 
 const CONFIG_FILENAME: &str = ".dt-fixup-config";
 
+const ACLI_SCHEMA_TEMPLATE: &[u8] = include_bytes!("../resources/acli_schema.json");
+const ACLI_CONFIG_TEMPLATE: &[u8] = include_bytes!("../resources/config.ag-stack.yml");
+
 #[derive(Clone)]
 struct FixupOptions {
     author_name: String,
@@ -65,28 +68,34 @@ enum ConfigInitMode {
 }
 
 /// Execute the fixup command, creating the config file on first run if needed.
-pub fn run_fixup() -> Result<()> {
+pub fn run_fixup(verbose: bool) -> Result<()> {
     let existing = read_config()?;
-    let options = match existing {
+    let mut options = match existing {
         Some(cfg) => cfg,
         None => {
-            ui::info("First-time setup: creating fixup resources directory");
-            setup_fixup_resources()?;
+            ui::info("First-time setup: configuring dt fixup");
             prompt_and_write_config(ConfigInitMode::Auto, None)?
         }
     };
+
+    setup_fixup_resources(&options)?;
+
+    if verbose {
+        options.verbose = true;
+    }
 
     execute(options)
 }
 
 /// Interactive config initialization accessible via `dt fixup init`.
-pub fn run_init() -> Result<()> {
+pub fn run_init(verbose: bool) -> Result<()> {
     let existing = read_config()?;
-    
-    ui::info("Setting up fixup resources directory");
-    setup_fixup_resources()?;
-    
-    prompt_and_write_config(ConfigInitMode::Manual, existing)?;
+
+    let mut options = prompt_and_write_config(ConfigInitMode::Manual, existing)?;
+    setup_fixup_resources(&options)?;
+    if verbose {
+        options.verbose = true;
+    }
     ui::success(&format!(
         "Configuration stored at {}",
         config_path()?.display()
@@ -361,6 +370,17 @@ fn resolve_acli_message(default_message: &str) -> Result<String> {
 }
 
 fn request_commit_message(options: &FixupOptions, message: &str) -> Result<()> {
+    log_verbose(
+        options.verbose,
+        &format!(
+            "Invoking acli rovodev with message='{}' output_file={} schema={} config={}",
+            message,
+            options.acli_output_file,
+            options.acli_output_schema,
+            options.acli_config_file,
+        ),
+    );
+
     let status = Command::new("acli")
         .arg("rovodev")
         .arg(message)
@@ -722,32 +742,50 @@ fn sanitize_value(value: &str) -> String {
     value.replace('\n', " ")
 }
 
-/// Set up the fixup resources directory and copy resource files
-fn setup_fixup_resources() -> Result<()> {
-    // Create the ../fixup/resources directory structure
-    let fixup_resources_dir = Path::new("../fixup/resources");
-    
-    ui::info(&format!("Creating directory: {}", fixup_resources_dir.display()));
-    fs::create_dir_all(fixup_resources_dir)
-        .with_context(|| format!("Failed to create directory {}", fixup_resources_dir.display()))?;
-    
-    // Copy resource files from src/resources to ../fixup/resources
-    let source_dir = Path::new("src/resources");
-    let resource_files = ["acli_schema.json", "config.ag-stack.yml"];
-    
-    for file in &resource_files {
-        let source_path = source_dir.join(file);
-        let dest_path = fixup_resources_dir.join(file);
-        
-        if source_path.exists() {
-            ui::info(&format!("Copying {} to {}", source_path.display(), dest_path.display()));
-            fs::copy(&source_path, &dest_path)
-                .with_context(|| format!("Failed to copy {} to {}", source_path.display(), dest_path.display()))?;
-        } else {
-            ui::info(&format!("Warning: Source file {} not found, skipping", source_path.display()));
+/// Set up the fixup resource files wherever the user configured them
+fn setup_fixup_resources(options: &FixupOptions) -> Result<()> {
+    let resources = [
+        ("ACLI schema", &options.acli_output_schema, ACLI_SCHEMA_TEMPLATE),
+        ("ACLI config", &options.acli_config_file, ACLI_CONFIG_TEMPLATE),
+    ];
+
+    let mut wrote_any = false;
+
+    for (label, target, contents) in resources {
+        let dest_path = Path::new(target);
+
+        if let Some(parent) = dest_path.parent() {
+            if !parent.exists() {
+                ui::info(&format!("Creating directory: {}", parent.display()));
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {}", parent.display()))?;
+            }
+        }
+
+        if dest_path.exists() {
+            continue;
+        }
+
+        ui::info(&format!("Writing {} template to {}", label, dest_path.display()));
+        fs::write(dest_path, contents)
+            .with_context(|| format!("Failed to write {}", dest_path.display()))?;
+        wrote_any = true;
+    }
+
+    let output_path = Path::new(&options.acli_output_file);
+    if let Some(parent) = output_path.parent() {
+        if !parent.exists() {
+            ui::info(&format!("Creating directory: {}", parent.display()));
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         }
     }
-    
-    ui::success("Fixup resources directory set up successfully");
+
+    if wrote_any {
+        ui::success("Fixup resource templates set up successfully");
+    } else {
+        ui::info("Fixup resource templates already present");
+    }
+
     Ok(())
 }

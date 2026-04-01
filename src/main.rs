@@ -63,6 +63,9 @@ enum Commands {
     Fixup {
         #[command(subcommand)]
         command: Option<FixupSubcommand>,
+        /// Enable verbose logging
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -98,9 +101,9 @@ fn main() -> Result<()> {
             });
             rovo::execute(rovo_cmd, args)?;
         }
-        Commands::Fixup { command } => match command {
-            Some(FixupSubcommand::Init) => fixup::run_init()?,
-            None => fixup::run_fixup()?,
+        Commands::Fixup { command, verbose } => match command {
+            Some(FixupSubcommand::Init) => fixup::run_init(verbose)?,
+            None => fixup::run_fixup(verbose)?,
         },
     }
 

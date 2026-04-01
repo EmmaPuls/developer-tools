@@ -36,7 +36,10 @@ sessions:
 # Atlassian product integration settings
 atlassianConnections:
   # Global jira projects user is part of
-  jiraProjects: []
+  jiraProjects:
+  - url: https://hello.atlassian.net/browse/FFCLEANUP
+    key: FFCLEANUP
+    id: '36008'
   # Directory where any local overrides are stored
   localOverridePath: .rovodev/atlassian_connections.json
   # Whether atlassian integration is enabled
@@ -154,7 +157,8 @@ sessionFeedback:
   # ISO timestamp of the last provided feedback
   lastFeedbackAsked: null
 
-atlassianBillingSite: null
+atlassianBillingSite:
+  siteUrl: https://hello.atlassian.net
 
 smartTasks:
   # Enable Smart Tasks discovery
