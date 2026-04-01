@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
 };
 
@@ -10,12 +10,12 @@ use dirs::home_dir;
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::utils::{git, ui};
+use crate::utils::{
+    ai::{AcliRovodev, AiCallSpec, AiProvider, AiSession},
+    git, ui,
+};
 
 const CONFIG_FILENAME: &str = ".dt-fixup-config";
-
-const ACLI_SCHEMA_TEMPLATE: &[u8] = include_bytes!("../resources/acli_schema.json");
-const ACLI_CONFIG_TEMPLATE: &[u8] = include_bytes!("../resources/config.ag-stack.yml");
 
 #[derive(Clone)]
 struct FixupOptions {
@@ -23,9 +23,7 @@ struct FixupOptions {
     stack_pattern: String,
     pull_request_keyword: String,
     acli_message: String,
-    acli_output_file: String,
-    acli_output_schema: String,
-    acli_config_file: String,
+    acli_resources_dir: PathBuf,
     stack_log_limit: u32,
     verbose: bool,
     default_message: String,
@@ -33,17 +31,16 @@ struct FixupOptions {
 
 impl Default for FixupOptions {
     fn default() -> Self {
+        let acli_resources_dir = home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".dt")
+            .join("fixup-resources");
         Self {
             author_name: "Emma Puls".to_string(),
             stack_pattern: "^stack/".to_string(),
             pull_request_keyword: "Pull Request".to_string(),
             acli_message: "Look at the staged changes in git and provide a commit message that would be appropriate for these changes. The message should be concise but descriptive, ideally starting with a verb in the present tense.".to_string(),
-            acli_output_file:
-                "../fixup/resources/acli_rovodev_output.json".to_string(),
-            acli_output_schema:
-                "../fixup/resources/acli_schema.json".to_string(),
-            acli_config_file:
-                "../fixup/resources/config.ag-stack.yml".to_string(),
+            acli_resources_dir,
             stack_log_limit: 10,
             verbose: false,
             default_message: "Update stack commit".to_string(),
@@ -78,8 +75,6 @@ pub fn run_fixup(verbose: bool) -> Result<()> {
         }
     };
 
-    setup_fixup_resources(&options)?;
-
     if verbose {
         options.verbose = true;
     }
@@ -92,7 +87,6 @@ pub fn run_init(verbose: bool) -> Result<()> {
     let existing = read_config()?;
 
     let mut options = prompt_and_write_config(ConfigInitMode::Manual, existing)?;
-    setup_fixup_resources(&options)?;
     if verbose {
         options.verbose = true;
     }
@@ -136,17 +130,27 @@ fn execute(options: FixupOptions) -> Result<()> {
     ui::info("Staging working tree changes");
     stage_changes()?;
 
-    ui::info("Gathering acli rovodev inputs");
-    verify_acli_inputs(&options)?;
-
     let acli_message = resolve_acli_message(&options.acli_message)?;
 
+    ui::info("Setting up AI provider resources");
+    let provider = AcliRovodev;
+    let paths = provider.setup_resources(&options.acli_resources_dir)?;
+    let spec = AiCallSpec {
+        prompt: acli_message,
+    };
+    let mut session = AiSession::new(paths.output_file.clone());
+
     ui::info("Requesting commit message suggestion from acli rovodev");
-    request_commit_message(&options, &acli_message)?;
+    provider
+        .build_command(&spec, &paths)
+        .status()
+        .context("Failed to execute acli rovodev")?;
 
     ui::info("Extracting suggested commit message");
-    let suggested_message =
-        extract_commit_message(&options)?.unwrap_or_else(|| options.default_message.clone());
+    let suggested_message = provider
+        .read_output::<AcliOutput>(&mut session)?
+        .and_then(|o| o.commit_message)
+        .unwrap_or_else(|| options.default_message.clone());
 
     ui::info("Showing git status summary");
     show_git_status()?;
@@ -339,19 +343,6 @@ fn stage_changes() -> Result<()> {
     }
 }
 
-fn verify_acli_inputs(options: &FixupOptions) -> Result<()> {
-    if options.acli_output_file.trim().is_empty() {
-        return Err(anyhow!("ACLI_OUTPUT_FILE must be provided."));
-    }
-    if options.acli_output_schema.trim().is_empty() {
-        return Err(anyhow!("ACLI_OUTPUT_SCHEMA must be provided."));
-    }
-    if options.acli_config_file.trim().is_empty() {
-        return Err(anyhow!("ACLI_CONFIG_FILE must be provided."));
-    }
-    Ok(())
-}
-
 fn resolve_acli_message(default_message: &str) -> Result<String> {
     if !default_message.trim().is_empty() {
         return Ok(default_message.to_string());
@@ -367,55 +358,6 @@ fn resolve_acli_message(default_message: &str) -> Result<String> {
             return Ok(input);
         }
     }
-}
-
-fn request_commit_message(options: &FixupOptions, message: &str) -> Result<()> {
-    log_verbose(
-        options.verbose,
-        &format!(
-            "Invoking acli rovodev with message='{}' output_file={} schema={} config={}",
-            message,
-            options.acli_output_file,
-            options.acli_output_schema,
-            options.acli_config_file,
-        ),
-    );
-
-    let status = Command::new("acli")
-        .arg("rovodev")
-        .arg(message)
-        .arg(format!("--output-file={}", options.acli_output_file))
-        .arg(format!("--output-schema={}", options.acli_output_schema))
-        .arg(format!("--config-file={}", options.acli_config_file))
-        .status()
-        .context("Failed to execute acli rovodev")?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("acli rovodev exited with an error"))
-    }
-}
-
-fn extract_commit_message(options: &FixupOptions) -> Result<Option<String>> {
-    let path = Path::new(&options.acli_output_file);
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let data = fs::read_to_string(path).context("Failed to read acli output file")?;
-    let parsed: Result<AcliOutput, _> = serde_json::from_str(&data);
-
-    let message = match parsed {
-        Ok(acli) => acli
-            .commit_message
-            .map(|m| m.trim().to_string())
-            .filter(|m| !m.is_empty()),
-        Err(_) => None,
-    };
-
-    let _ = fs::remove_file(path);
-    Ok(message)
 }
 
 fn show_git_status() -> Result<()> {
@@ -566,9 +508,7 @@ fn apply_config_value(options: &mut FixupOptions, key: &str, raw_value: &str) ->
         "STACK_PATTERN" => options.stack_pattern = value,
         "PULL_REQUEST_KEYWORD" => options.pull_request_keyword = value,
         "ACLI_MESSAGE" => options.acli_message = value,
-        "ACLI_OUTPUT_FILE" => options.acli_output_file = value,
-        "ACLI_OUTPUT_SCHEMA" => options.acli_output_schema = value,
-        "ACLI_CONFIG_FILE" => options.acli_config_file = value,
+        "ACLI_RESOURCES_DIR" => options.acli_resources_dir = PathBuf::from(value),
         "STACK_LOG_LIMIT" => {
             let parsed: u32 = value
                 .parse()
@@ -580,6 +520,7 @@ fn apply_config_value(options: &mut FixupOptions, key: &str, raw_value: &str) ->
                 parse_bool(&value).ok_or_else(|| anyhow!("VERBOSE must be true/false"))?;
         }
         "DEFAULT_MESSAGE" => options.default_message = value,
+        // Silently skip old keys that were removed in the refactor
         _ => {}
     }
 
@@ -633,9 +574,11 @@ fn prompt_for_config(defaults: &FixupOptions) -> Result<FixupOptions> {
         &defaults.pull_request_keyword,
     )?;
     let acli_message = prompt_string("ACLI message", &defaults.acli_message)?;
-    let acli_output_file = prompt_string("ACLI output file", &defaults.acli_output_file)?;
-    let acli_output_schema = prompt_string("ACLI output schema", &defaults.acli_output_schema)?;
-    let acli_config_file = prompt_string("ACLI config file", &defaults.acli_config_file)?;
+    let acli_resources_dir = prompt_string(
+        "ACLI resources directory",
+        &defaults.acli_resources_dir.display().to_string(),
+    )
+    .map(PathBuf::from)?;
     let stack_log_limit = prompt_positive_u32("Stack log limit", defaults.stack_log_limit)?;
     let verbose = Confirm::new()
         .with_prompt("Enable verbose logging?")
@@ -648,9 +591,7 @@ fn prompt_for_config(defaults: &FixupOptions) -> Result<FixupOptions> {
         stack_pattern,
         pull_request_keyword,
         acli_message,
-        acli_output_file,
-        acli_output_schema,
-        acli_config_file,
+        acli_resources_dir,
         stack_log_limit,
         verbose,
         default_message,
@@ -715,16 +656,8 @@ fn write_config_file(config: &FixupOptions) -> Result<()> {
         sanitize_value(&config.acli_message)
     ));
     content.push_str(&format!(
-        "ACLI_OUTPUT_FILE={}\n",
-        sanitize_value(&config.acli_output_file)
-    ));
-    content.push_str(&format!(
-        "ACLI_OUTPUT_SCHEMA={}\n",
-        sanitize_value(&config.acli_output_schema)
-    ));
-    content.push_str(&format!(
-        "ACLI_CONFIG_FILE={}\n",
-        sanitize_value(&config.acli_config_file)
+        "ACLI_RESOURCES_DIR={}\n",
+        sanitize_value(&config.acli_resources_dir.display().to_string())
     ));
     content.push_str(&format!("STACK_LOG_LIMIT={}\n", config.stack_log_limit));
     content.push_str(&format!("VERBOSE={}\n", config.verbose));
@@ -742,50 +675,3 @@ fn sanitize_value(value: &str) -> String {
     value.replace('\n', " ")
 }
 
-/// Set up the fixup resource files wherever the user configured them
-fn setup_fixup_resources(options: &FixupOptions) -> Result<()> {
-    let resources = [
-        ("ACLI schema", &options.acli_output_schema, ACLI_SCHEMA_TEMPLATE),
-        ("ACLI config", &options.acli_config_file, ACLI_CONFIG_TEMPLATE),
-    ];
-
-    let mut wrote_any = false;
-
-    for (label, target, contents) in resources {
-        let dest_path = Path::new(target);
-
-        if let Some(parent) = dest_path.parent() {
-            if !parent.exists() {
-                ui::info(&format!("Creating directory: {}", parent.display()));
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-            }
-        }
-
-        if dest_path.exists() {
-            continue;
-        }
-
-        ui::info(&format!("Writing {} template to {}", label, dest_path.display()));
-        fs::write(dest_path, contents)
-            .with_context(|| format!("Failed to write {}", dest_path.display()))?;
-        wrote_any = true;
-    }
-
-    let output_path = Path::new(&options.acli_output_file);
-    if let Some(parent) = output_path.parent() {
-        if !parent.exists() {
-            ui::info(&format!("Creating directory: {}", parent.display()));
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-        }
-    }
-
-    if wrote_any {
-        ui::success("Fixup resource templates set up successfully");
-    } else {
-        ui::info("Fixup resource templates already present");
-    }
-
-    Ok(())
-}

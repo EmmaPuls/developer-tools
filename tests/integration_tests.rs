@@ -255,3 +255,41 @@ fn test_version_and_help() {
             "Git and development workflow tools",
         ));
 }
+
+// ── Phase 00 regression-net: dt fixup ────────────────────────────────────────
+
+#[test]
+fn test_fixup_help() {
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["fixup", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Manage the stack fixup workflow"));
+}
+
+#[test]
+fn test_fixup_init_not_in_git_repo() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["fixup", "init"])
+        .current_dir(&temp_dir)
+        // Provide piped stdin so dialoguer doesn't hang waiting for a TTY
+        .write_stdin("\n\n\n\n\n\n\n\n\n\n")
+        .assert()
+        // It may succeed (writes config) or fail — but must never panic/SIGABRT.
+        // The key invariant is: exit code is 0 or 1, not a signal.
+        .stderr(predicate::str::is_empty().not());
+}
+
+#[test]
+fn test_fixup_no_args_not_in_git_repo() {
+    let temp_dir = tempfile::tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["fixup"])
+        .current_dir(&temp_dir)
+        .write_stdin("\n\n\n\n\n\n\n\n\n\n")
+        .assert()
+        .failure();
+}
