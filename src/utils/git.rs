@@ -18,9 +18,17 @@ pub fn local_branch_exists(repo: &Repository, branch_name: &str) -> Result<bool>
 
 /// Check if a branch exists on remote without fetching it
 pub fn remote_branch_exists(branch_name: &str) -> Result<bool> {
-    let output = Command::new("git")
-        .args(["ls-remote", "--heads", "origin", branch_name])
-        .output()?;
+    remote_branch_exists_in(branch_name, None)
+}
+
+/// Check if a branch exists on remote without fetching it, running git in `working_dir`
+pub fn remote_branch_exists_in(branch_name: &str, working_dir: Option<&std::path::Path>) -> Result<bool> {
+    let mut cmd = Command::new("git");
+    cmd.args(["ls-remote", "--heads", "origin", branch_name]);
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output()?;
 
     // If output is not empty, the branch exists
     Ok(!output.stdout.is_empty())
@@ -28,9 +36,17 @@ pub fn remote_branch_exists(branch_name: &str) -> Result<bool> {
 
 /// Execute git checkout with the given arguments
 pub fn git_checkout(args: &[String]) -> Result<()> {
+    git_checkout_in(args, None)
+}
+
+/// Execute git checkout with the given arguments, running git in `working_dir`
+pub fn git_checkout_in(args: &[String], working_dir: Option<&std::path::Path>) -> Result<()> {
     let mut cmd = Command::new("git");
     cmd.arg("checkout");
     cmd.args(args);
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
 
     let status = cmd.status()?;
     if !status.success() {
@@ -42,11 +58,20 @@ pub fn git_checkout(args: &[String]) -> Result<()> {
 
 /// Execute git checkout -b with the given arguments
 pub fn git_checkout_new_branch(branch_name: &str, tracking_branch: Option<&str>) -> Result<()> {
+    git_checkout_new_branch_in(branch_name, tracking_branch, None)
+}
+
+/// Execute git checkout -b with the given arguments, running git in `working_dir`
+pub fn git_checkout_new_branch_in(branch_name: &str, tracking_branch: Option<&str>, working_dir: Option<&std::path::Path>) -> Result<()> {
     let mut cmd = Command::new("git");
     cmd.args(["checkout", "-b", branch_name]);
 
     if let Some(tracking) = tracking_branch {
         cmd.arg(tracking);
+    }
+
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
     }
 
     let status = cmd.status()?;
@@ -59,9 +84,17 @@ pub fn git_checkout_new_branch(branch_name: &str, tracking_branch: Option<&str>)
 
 /// Switch to an existing local branch
 pub fn switch_to_local_branch(branch_name: &str) -> Result<()> {
-    let output = Command::new("git")
-        .args(["checkout", branch_name])
-        .output()?;
+    switch_to_local_branch_in(branch_name, None)
+}
+
+/// Switch to an existing local branch, running git in `working_dir`
+pub fn switch_to_local_branch_in(branch_name: &str, working_dir: Option<&std::path::Path>) -> Result<()> {
+    let mut cmd = Command::new("git");
+    cmd.args(["checkout", branch_name]);
+    if let Some(dir) = working_dir {
+        cmd.current_dir(dir);
+    }
+    let output = cmd.output()?;
 
     if output.status.success() {
         Ok(())
@@ -174,65 +207,46 @@ mod tests {
 
     #[test]
     fn test_git_functions_basic() {
-        // Test that functions can be called without panicking
+        // Test that functions can be called without panicking.
+        // Uses _in variants with an explicit path to avoid mutating the
+        // process-wide cwd (which is shared across parallel tests).
         let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
+        let repo_path = temp_repo.path();
 
-        // Use closure to ensure cleanup happens
-        let test_result = std::panic::catch_unwind(|| {
-            std::env::set_current_dir(&temp_repo).unwrap();
+        // Test git_checkout_new_branch with simple branch name
+        let result = git_checkout_new_branch_in("simple-test", None, Some(repo_path));
+        assert!(result.is_ok(), "Should create new branch");
 
-            // Test git_checkout_new_branch with simple branch name
-            let result = git_checkout_new_branch("simple-test", None);
-            assert!(result.is_ok(), "Should create new branch");
+        // Test that we can call switch_to_local_branch (may fail, but shouldn't panic)
+        let _result = switch_to_local_branch_in("simple-test", Some(repo_path));
 
-            // Test that we can call switch_to_local_branch (may fail, but shouldn't panic)
-            let _result = switch_to_local_branch("simple-test");
+        // Test git_checkout with basic args
+        let args = vec!["simple-test".to_string()];
+        let _result = git_checkout_in(&args, Some(repo_path));
 
-            // Test git_checkout with basic args
-            let args = vec!["simple-test".to_string()];
-            let _result = git_checkout(&args);
-
-            // Test remote_branch_exists safely
-            let _result = remote_branch_exists("nonexistent");
-        });
-
-        // Always restore directory
-        let _ = std::env::set_current_dir(original_dir);
-
-        if test_result.is_err() {
-            panic!("Test failed");
-        }
+        // Test remote_branch_exists safely
+        let _result = remote_branch_exists_in("nonexistent", Some(repo_path));
     }
 
     #[test]
     fn test_error_conditions() {
-        // Test error handling
+        // Test error handling.
+        // Uses _in variants with an explicit path to avoid mutating the
+        // process-wide cwd (which is shared across parallel tests).
         let temp_repo = create_test_repo();
-        let original_dir = std::env::current_dir().unwrap();
+        let repo_path = temp_repo.path();
 
-        let test_result = std::panic::catch_unwind(|| {
-            std::env::set_current_dir(&temp_repo).unwrap();
+        // Test git_checkout_new_branch with invalid tracking
+        let result = git_checkout_new_branch_in("error-test", Some("invalid/ref"), Some(repo_path));
+        assert!(result.is_err(), "Should fail with invalid tracking branch");
 
-            // Test git_checkout_new_branch with invalid tracking
-            let result = git_checkout_new_branch("error-test", Some("invalid/ref"));
-            assert!(result.is_err(), "Should fail with invalid tracking branch");
+        // Test switch_to_local_branch with nonexistent branch
+        let result = switch_to_local_branch_in("definitely-does-not-exist", Some(repo_path));
+        assert!(result.is_err(), "Should fail for nonexistent branch");
 
-            // Test switch_to_local_branch with nonexistent branch
-            let result = switch_to_local_branch("definitely-does-not-exist");
-            assert!(result.is_err(), "Should fail for nonexistent branch");
-
-            // Test git_checkout with invalid arguments
-            let invalid_args = vec!["--this-flag-does-not-exist".to_string()];
-            let result = git_checkout(&invalid_args);
-            assert!(result.is_err(), "Should fail with invalid args");
-        });
-
-        // Always restore directory
-        let _ = std::env::set_current_dir(original_dir);
-
-        if test_result.is_err() {
-            panic!("Test failed");
-        }
+        // Test git_checkout with invalid arguments
+        let invalid_args = vec!["--this-flag-does-not-exist".to_string()];
+        let result = git_checkout_in(&invalid_args, Some(repo_path));
+        assert!(result.is_err(), "Should fail with invalid args");
     }
 }

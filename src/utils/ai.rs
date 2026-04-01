@@ -17,8 +17,6 @@ const ACLI_CONFIG_TEMPLATE: &[u8] = include_bytes!("../resources/config.ag-stack
 /// Specification for a single AI call: the prompt text and where to write output.
 pub struct AiCallSpec {
     pub prompt: String,
-    /// Full path for `--output-file`.
-    pub output_path: PathBuf,
 }
 
 /// Resolved filesystem paths the AI provider needs for a call.
@@ -159,11 +157,9 @@ mod tests {
     fn test_ai_call_spec_construction() {
         let spec = AiCallSpec {
             prompt: "Write a commit message".to_string(),
-            output_path: PathBuf::from("/tmp/out.json"),
         };
 
         assert_eq!(spec.prompt, "Write a commit message");
-        assert_eq!(spec.output_path, PathBuf::from("/tmp/out.json"));
     }
 
     // ── AcliRovodev::build_command args ──────────────────────────────────────
@@ -173,7 +169,6 @@ mod tests {
         let provider = AcliRovodev;
         let spec = AiCallSpec {
             prompt: "Summarise the diff".to_string(),
-            output_path: PathBuf::from("/tmp/out.json"),
         };
         let paths = AiPaths {
             output_file: PathBuf::from("/tmp/out.json"),
