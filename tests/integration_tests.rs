@@ -339,3 +339,27 @@ fn test_add_lang_flag_accepted() {
         .stderr(predicate::str::contains("unrecognised").not())
         .stderr(predicate::str::contains("unexpected argument").not());
 }
+
+// ── Goal 3: async-first prompt contract ──────────────────────────────────────
+
+#[test]
+fn test_add_meta_prompt_async_pattern_example() {
+    // Verify that ADD_META_PROMPT satisfies all async-first invariants.
+    // This is the integration-level contract test for Goal 3.
+    use dt::commands::add::ADD_META_PROMPT;
+
+    let lower = ADD_META_PROMPT.to_lowercase();
+    assert!(
+        lower.contains("background") || lower.contains("backgrounded") || lower.contains(" &"),
+        "Prompt must mention backgrounded calls"
+    );
+    assert!(
+        lower.contains("pid") || lower.contains("$!"),
+        "Prompt must mention PID capture"
+    );
+    assert!(lower.contains("wait"), "Prompt must mention waiting on background calls");
+    assert!(
+        lower.contains("filename") && lower.contains("description") && lower.contains("script"),
+        "Prompt must specify the three required JSON fields"
+    );
+}

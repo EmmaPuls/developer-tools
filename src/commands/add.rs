@@ -19,14 +19,30 @@ pub const DEFAULT_SCRIPTS_DIR: &str = ".dt/scripts";
 
 /// The meta-prompt template sent to the AI for script generation.
 /// `{LANG}` and `{PROMPT}` are replaced at runtime via simple string substitution.
-const ADD_META_PROMPT: &str = r#"You are a script generator. Given the user's requirements below, produce a script that fulfils them.
+pub const ADD_META_PROMPT: &str = r#"
+You are a script generator. Given the user's requirements below, produce a
+shell script (or JavaScript script if instructed) that fulfils them.
 
-Rules:
-1. Identify every value in the script that requires an AI response. Emit ALL of those as backgrounded `acli rovodev` calls at the very top of the script — before any other work — capturing the PID of each.
-2. Proceed with all deterministic steps concurrently while the AI calls run in the background.
-3. Read each AI output file only at the step that actually needs the value (`wait $PID`, then `jq -r '.value' <file>`). Delete the temp file after.
-4. Choose a short, descriptive snake_case filename with the correct extension (.sh for Bash, .js for JavaScript).
-5. Return ONLY valid JSON in this exact shape — no markdown, no prose:
+Async-first rules (MANDATORY — do not omit):
+1. Identify EVERY value in the script that requires an AI response (any call
+   to `acli rovodev`).
+2. Emit ALL of those as backgrounded `acli rovodev` calls at the very top of
+   the script — before any other work. Capture each PID immediately:
+       acli rovodev "<prompt>" \
+         --output-file=/tmp/dt_ai_<name>.json \
+         --output-schema=~/.dt/resources/schema.json \
+         --config-file=~/.dt/resources/config.ag-stack.yml &
+       AI_<NAME>_PID=$!
+3. Proceed with ALL deterministic steps concurrently while the AI calls run
+   in the background.
+4. Read each AI output file ONLY at the step that actually needs the value —
+   and not before. Always wait on the PID first:
+       wait $AI_<NAME>_PID
+       RESULT=$(jq -r '.value' /tmp/dt_ai_<name>.json)
+       rm -f /tmp/dt_ai_<name>.json
+5. Choose a short, descriptive snake_case filename with the correct extension
+   (.sh for Bash, .js for JavaScript).
+6. Return ONLY valid JSON in this exact shape — no markdown, no prose:
    {
      "filename":    "<snake_case_name.ext>",
      "description": "<one sentence describing what the script does>",
@@ -331,6 +347,98 @@ mod tests {
             has_async_keyword,
             "ADD_META_PROMPT must contain 'background', 'backgrounded', or 'async'"
         );
+    }
+
+    // ── Goal 3 unit tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_meta_prompt_contains_json_fields() {
+        // The AI must return structured JSON with exactly these three fields.
+        assert!(ADD_META_PROMPT.contains("\"filename\"") || ADD_META_PROMPT.contains("filename"));
+        assert!(ADD_META_PROMPT.contains("\"description\"") || ADD_META_PROMPT.contains("description"));
+        assert!(ADD_META_PROMPT.contains("\"script\"") || ADD_META_PROMPT.contains("script"));
+    }
+
+    #[test]
+    fn test_meta_prompt_enforces_background_calls() {
+        // The prompt must instruct the AI to background AI calls (async-first pattern).
+        let prompt_lower = ADD_META_PROMPT.to_lowercase();
+        let has_background = prompt_lower.contains("background")
+            || prompt_lower.contains("async")
+            || prompt_lower.contains(" &")
+            || prompt_lower.contains("backgrounded");
+        assert!(has_background, "ADD_META_PROMPT must instruct the AI to emit backgrounded AI calls");
+    }
+
+    #[test]
+    fn test_meta_prompt_enforces_pid_capture() {
+        // The prompt must instruct the AI to capture the PID of each background call
+        // so it can wait for it before consuming the result.
+        let prompt_lower = ADD_META_PROMPT.to_lowercase();
+        let has_pid = prompt_lower.contains("pid")
+            || prompt_lower.contains("wait $!")
+            || prompt_lower.contains("$!");
+        assert!(has_pid, "ADD_META_PROMPT must instruct the AI to capture and wait on PIDs");
+    }
+
+    #[test]
+    fn test_meta_prompt_enforces_wait_before_read() {
+        // The prompt must explicitly instruct reading AI output only AFTER waiting.
+        let prompt_lower = ADD_META_PROMPT.to_lowercase();
+        let has_wait = prompt_lower.contains("wait")
+            && (prompt_lower.contains("read") || prompt_lower.contains("consume") || prompt_lower.contains("output file"));
+        assert!(has_wait, "ADD_META_PROMPT must instruct the AI to wait before reading AI output");
+    }
+
+    #[test]
+    fn test_meta_prompt_enforces_cleanup() {
+        // The prompt must instruct the AI to delete temp output files after reading.
+        let prompt_lower = ADD_META_PROMPT.to_lowercase();
+        let has_cleanup = prompt_lower.contains("delete")
+            || prompt_lower.contains("rm ")
+            || prompt_lower.contains("cleanup")
+            || prompt_lower.contains("remove");
+        assert!(has_cleanup, "ADD_META_PROMPT must instruct the AI to clean up temp AI output files");
+    }
+
+    #[test]
+    fn test_meta_prompt_lang_placeholder() {
+        // {LANG} must be present so build_add_prompt() can substitute the target language.
+        assert!(
+            ADD_META_PROMPT.contains("{LANG}"),
+            "ADD_META_PROMPT must contain the {{LANG}} placeholder"
+        );
+    }
+
+    #[test]
+    fn test_meta_prompt_prompt_placeholder() {
+        // {PROMPT} must be present so build_add_prompt() can inject user requirements.
+        assert!(
+            ADD_META_PROMPT.contains("{PROMPT}"),
+            "ADD_META_PROMPT must contain the {{PROMPT}} placeholder"
+        );
+    }
+
+    #[test]
+    fn test_build_add_prompt_substitutes_lang() {
+        let result = build_add_prompt("list all files", &Lang::Bash);
+        assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
+        assert!(result.to_lowercase().contains("bash"));
+    }
+
+    #[test]
+    fn test_build_add_prompt_substitutes_prompt() {
+        let result = build_add_prompt("do the thing", &Lang::Bash);
+        assert!(!result.contains("{PROMPT}"), "{{PROMPT}} placeholder must be replaced");
+        assert!(result.contains("do the thing"));
+    }
+
+    #[test]
+    fn test_build_add_prompt_js_language() {
+        let result = build_add_prompt("list all files", &Lang::Js);
+        assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
+        let lower = result.to_lowercase();
+        assert!(lower.contains("javascript") || lower.contains("js"));
     }
 
     // ── build_add_prompt ──────────────────────────────────────────────────────
