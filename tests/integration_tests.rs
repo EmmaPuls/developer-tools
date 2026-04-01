@@ -293,3 +293,49 @@ fn test_fixup_no_args_not_in_git_repo() {
         .assert()
         .failure();
 }
+
+// ── Phase 0: dt add tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_add_help() {
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["add", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Generate a script using AI"));
+}
+
+#[test]
+fn test_add_requires_prompt_or_message() {
+    // When stdin is not a TTY and no -m flag is given, the editor path will
+    // fail to open $VISUAL/$EDITOR. The command must fail cleanly (non-zero
+    // exit) without panicking or hanging.
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["add"])
+        .write_stdin("") // non-TTY stdin, no editor available
+        .env_remove("VISUAL")
+        .env_remove("EDITOR")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn test_add_inline_message_flag_accepted() {
+    // The -m flag must be accepted by clap (it may still fail later when
+    // trying to spawn `acli`, but it must not fail at argument parsing).
+    // We verify the failure mode is NOT "unrecognised argument".
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["add", "-m", "copy all .md files from ~/notes to ~/backup"])
+        .assert()
+        .stderr(predicate::str::contains("unrecognised").not())
+        .stderr(predicate::str::contains("unexpected argument").not());
+}
+
+#[test]
+fn test_add_lang_flag_accepted() {
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["add", "-m", "list all files", "--lang", "js"])
+        .assert()
+        .stderr(predicate::str::contains("unrecognised").not())
+        .stderr(predicate::str::contains("unexpected argument").not());
+}
