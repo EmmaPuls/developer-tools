@@ -308,13 +308,22 @@ fn test_add_help() {
 #[test]
 fn test_add_requires_prompt_or_message() {
     // When stdin is not a TTY and no -m flag is given, the editor path will
-    // fail to open $VISUAL/$EDITOR. The command must fail cleanly (non-zero
-    // exit) without panicking or hanging.
+    // fail to find any editor. The command must fail cleanly (non-zero exit)
+    // without panicking or hanging.
+    //
+    // We blank out every editor env var AND point HOME to an empty temp dir
+    // so that `git config core.editor` also returns nothing, preventing the
+    // process from accidentally launching a real editor (e.g. `code --wait`)
+    // and hanging indefinitely.
+    let empty_home = TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["add"])
         .write_stdin("") // non-TTY stdin, no editor available
         .env_remove("VISUAL")
         .env_remove("EDITOR")
+        .env_remove("GIT_EDITOR")
+        .env("HOME", empty_home.path())
+        .env("GIT_CONFIG_NOSYSTEM", "1") // ignore /etc/gitconfig
         .assert()
         .failure();
 }
@@ -324,20 +333,63 @@ fn test_add_inline_message_flag_accepted() {
     // The -m flag must be accepted by clap (it may still fail later when
     // trying to spawn `acli`, but it must not fail at argument parsing).
     // We verify the failure mode is NOT "unrecognised argument".
+    //
+    // Point PATH to an empty dir so `acli` is not found and the process
+    // fails immediately rather than hanging waiting for an AI response.
+    let empty_bin = TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["add", "-m", "copy all .md files from ~/notes to ~/backup"])
+        .env("PATH", empty_bin.path())
         .assert()
+        .failure()
         .stderr(predicate::str::contains("unrecognised").not())
         .stderr(predicate::str::contains("unexpected argument").not());
 }
 
 #[test]
 fn test_add_lang_flag_accepted() {
+    // Same approach: empty PATH so `acli` can't be found and we fail fast.
+    let empty_bin = TempDir::new().unwrap();
     let mut cmd = Command::cargo_bin("dt").unwrap();
     cmd.args(["add", "-m", "list all files", "--lang", "js"])
+        .env("PATH", empty_bin.path())
         .assert()
+        .failure()
         .stderr(predicate::str::contains("unrecognised").not())
         .stderr(predicate::str::contains("unexpected argument").not());
+}
+
+// ── Goal 4: dt run ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_run_help() {
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["run", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Run a generated script"));
+}
+
+#[test]
+fn test_run_nonexistent_script() {
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["run", "this_script_definitely_does_not_exist_xyz.sh"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not found").or(predicate::str::contains("No such")));
+}
+
+#[test]
+fn test_run_no_args_no_scripts_fails_cleanly() {
+    // When ~/.dt/scripts/ is empty (or doesn't exist), running `dt run` with
+    // no args must fail cleanly rather than panic or hang.
+    // We point the scripts dir at a known-empty temp dir via env override or
+    // simply accept the failure without asserting on the exact message.
+    let mut cmd = Command::cargo_bin("dt").unwrap();
+    cmd.args(["run"])
+        .write_stdin("") // non-TTY: FuzzySelect will fail, which is expected
+        .assert()
+        .failure();
 }
 
 // ── Goal 3: async-first prompt contract ──────────────────────────────────────

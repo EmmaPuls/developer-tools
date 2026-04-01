@@ -10,7 +10,7 @@ enum RovoCommands {
 mod commands;
 mod utils;
 
-use commands::{add, checkout, fixup, rovo, squash};
+use commands::{add, checkout, fixup, rovo, run, squash};
 
 #[derive(Parser)]
 #[command(name = "dt")]
@@ -76,6 +76,11 @@ enum Commands {
         #[arg(long, default_value = "bash", value_parser = ["bash", "js"])]
         lang: String,
     },
+    /// Run a generated script by name, or pick from an interactive list
+    Run {
+        /// Name of the script to run (omit for interactive fuzzy list)
+        script_name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +122,9 @@ fn main() -> Result<()> {
         Commands::Add { message, lang } => {
             let lang = add::Lang::from_str(&lang)?;
             add::execute(message, lang)?;
+        }
+        Commands::Run { script_name } => {
+            run::execute(script_name)?;
         }
     }
 

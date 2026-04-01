@@ -13,7 +13,7 @@
 #   Purr, Sosumi, Submarine, Tink
 #   Default: Glass
 
-SOUND="${1:-Glass}"
+SOUND="${1:-Bottle}"
 SOUND_FILE="/System/Library/Sounds/${SOUND}.aiff"
 
 if [[ "$(uname)" != "Darwin" ]]; then

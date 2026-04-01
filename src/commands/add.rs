@@ -30,8 +30,8 @@ Async-first rules (MANDATORY — do not omit):
    the script — before any other work. Capture each PID immediately:
        acli rovodev "<prompt>" \
          --output-file=/tmp/dt_ai_<name>.json \
-         --output-schema=~/.dt/resources/schema.json \
-         --config-file=~/.dt/resources/config.ag-stack.yml &
+         --output-schema="$HOME/.dt/resources/acli_add_schema.json" \
+         --config-file="$HOME/.dt/resources/config.ag-stack.yml" &
        AI_<NAME>_PID=$!
 3. Proceed with ALL deterministic steps concurrently while the AI calls run
    in the background.
@@ -155,9 +155,11 @@ fn open_editor_for_prompt() -> Result<String> {
 
     let tmp_path = tmp.path().to_path_buf();
 
-    // Resolve editor binary
+    // Resolve editor binary.
+    // Priority: $VISUAL > $EDITOR > $GIT_EDITOR > git config core.editor
     let editor = env::var("VISUAL")
         .or_else(|_| env::var("EDITOR"))
+        .or_else(|_| env::var("GIT_EDITOR"))
         .or_else(|_| {
             // Try git config core.editor
             let output = Command::new("git")
@@ -181,8 +183,13 @@ fn open_editor_for_prompt() -> Result<String> {
             )
         })?;
 
-    // Spawn editor blocking
-    Command::new(&editor)
+    // Spawn editor blocking.
+    // The editor string may contain arguments (e.g. "code --wait"), so split on
+    // whitespace and pass the tail as extra arguments before the file path.
+    let mut parts = editor.split_whitespace();
+    let bin = parts.next().ok_or_else(|| anyhow!("Editor command is empty"))?;
+    Command::new(bin)
+        .args(parts)
         .arg(&tmp_path)
         .status()
         .with_context(|| format!("Failed to launch editor '{}'", editor))?;
@@ -234,7 +241,8 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
         .ok_or_else(|| anyhow!("Could not determine home directory"))?
         .join(".dt")
         .join("resources");
-    let paths = provider.setup_resources(&resources_dir)?;
+    let paths = provider
+        .setup_resources_with_schema(&resources_dir, AcliRovodev::add_schema_bytes())?;
 
     // 4. Build spec + session
     let spec = AiCallSpec { prompt };
