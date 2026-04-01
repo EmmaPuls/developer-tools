@@ -14,7 +14,9 @@ The plan follows strict TDD: **write tests first, confirm they fail, then implem
 
 ---
 
-## Phase 00 — Regression-net: write tests for `dt fixup`'s current AI behaviour
+## Phase 00 — Regression-net: write tests for `dt fixup`'s current AI behaviour ✅ COMPLETE
+
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
 
 **Goal:** Capture the observable behaviour of `dt fixup`'s AI path *before* the refactor so that the exact same tests can be re-run at the end of Phase 4 to confirm nothing regressed.
 
@@ -153,6 +155,8 @@ These test the *current* private logic that is about to be deleted. They go gree
 
 ## Phase 0 — Write tests FIRST, confirm RED
 
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
+
 After writing the tests, ask the user to confirm they fail:
 > Please run `cargo test` and share the output — the new `ai.rs` tests should be RED at this point.
 
@@ -181,6 +185,8 @@ After writing the tests, ask the user to confirm they fail:
 ---
 
 ## Phase 1 — Create `src/utils/ai.rs`
+
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
 
 ### Public types
 
@@ -265,6 +271,8 @@ fn read_output<T: DeserializeOwned>(&self, session: &mut AiSession) -> Result<Op
 
 ## Phase 2 — Wire into `src/utils/mod.rs`
 
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
+
 ```rust
 pub mod ai;   // add this line
 pub mod git;
@@ -274,6 +282,8 @@ pub mod ui;
 ---
 
 ## Phase 3 — Refactor `fixup.rs`
+
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
 
 ### What gets removed
 
@@ -312,6 +322,8 @@ let suggested_message = provider
 ---
 
 ## Phase 4 — Run full test suite, confirm GREEN
+
+> **⚠️ Cargo convention:** The AI does **not** run `cargo` commands. Provide the exact command and ask the user to run it and share output.
 
 Ask the user to run the full test suite and share the output:
 > Please run `cargo test` and share the output.
