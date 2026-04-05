@@ -13,7 +13,11 @@
     "script": {
       "type": "string",
       "description": "Full script content as a single string."
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "JSON Schema for the output of acli rovodev calls made within the generated script."
     }
   },
-  "required": ["filename", "description", "script"]
+  "required": ["filename", "description", "script", "output_schema"]
 }

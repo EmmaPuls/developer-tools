@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -32,8 +33,20 @@ struct ScriptMeta {
 
 // ── Helper functions ──────────────────────────────────────────────────────────
 
-/// Discovers all scripts in `dir`, reading optional sidecar `.meta.json` files
-/// for descriptions. Entries are sorted by filename for a deterministic UI order.
+/// Discovers all scripts in `dir` using the per-script folder layout:
+///
+/// ```text
+/// dir/
+///   my_script/
+///     my_script.sh    ← the script file
+///     meta.json       ← optional description
+///     resources/      ← optional script-specific assets
+/// ```
+///
+/// Each subdirectory of `dir` is treated as one script entry. The script file
+/// inside the subdirectory must share the stem of the folder name (with any
+/// supported extension). `meta.json` inside the subfolder supplies the description.
+/// Entries are sorted by folder name for a deterministic UI order.
 pub fn discover_scripts(dir: &Path) -> Result<Vec<ScriptEntry>> {
     let mut entries: Vec<ScriptEntry> = Vec::new();
 
@@ -45,15 +58,27 @@ pub fn discover_scripts(dir: &Path) -> Result<Vec<ScriptEntry>> {
 
     for entry in read_dir {
         let entry = entry?;
-        let filename = entry.file_name().to_string_lossy().to_string();
+        let meta = entry.metadata()?;
 
-        // Skip sidecar meta files — they are not scripts.
-        if filename.ends_with(".meta.json") {
+        // Only descend into subdirectories — ignore any loose files at the top level.
+        if !meta.is_dir() {
             continue;
         }
 
-        // Attempt to read the sidecar .meta.json for this script.
-        let meta_path = dir.join(format!("{}.meta.json", filename));
+        let folder_name = entry.file_name().to_string_lossy().to_string();
+
+        // Look for the script file inside: <folder>/<folder>.sh or <folder>/<folder>.js
+        let folder_path = entry.path();
+        let script_filename = find_script_in_folder(&folder_path, &folder_name);
+
+        // Skip directories that don't contain a recognisable script file.
+        let filename = match script_filename {
+            Some(f) => f,
+            None => continue,
+        };
+
+        // Read meta.json from inside the subfolder for the description.
+        let meta_path = folder_path.join("meta.json");
         let description = if meta_path.exists() {
             match std::fs::read_to_string(&meta_path) {
                 Ok(content) => serde_json::from_str::<ScriptMeta>(&content)
@@ -77,18 +102,62 @@ pub fn discover_scripts(dir: &Path) -> Result<Vec<ScriptEntry>> {
     Ok(entries)
 }
 
-/// Returns the `PathBuf` for `name` inside `dir`, or an error if it does not exist.
-pub fn resolve_script(dir: &Path, name: &str) -> Result<PathBuf> {
-    let path = dir.join(name);
-    if path.exists() {
-        Ok(path)
-    } else {
-        Err(anyhow!(
-            "Script '{}' not found in {}",
-            name,
-            dir.display()
-        ))
+/// Looks inside `folder_path` for a script file whose stem matches `folder_name`.
+/// Returns the bare filename (e.g. `"my_script.sh"`) if found.
+fn find_script_in_folder(folder_path: &Path, folder_name: &str) -> Option<String> {
+    for ext in &["sh", "js"] {
+        let candidate = format!("{}.{}", folder_name, ext);
+        if folder_path.join(&candidate).exists() {
+            return Some(candidate);
+        }
     }
+    // Fallback: any file in the folder whose stem matches the folder name.
+    if let Ok(rd) = std::fs::read_dir(folder_path) {
+        for item in rd.flatten() {
+            let name = item.file_name().to_string_lossy().to_string();
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if stem == folder_name && item.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                return Some(name);
+            }
+        }
+    }
+    None
+}
+
+/// Returns the `PathBuf` for the script file for `name` inside `dir`, or an
+/// error if no matching script folder/file is found.
+///
+/// `name` may be either the folder name (stem) or the full filename including
+/// extension (e.g. `"my_script"` or `"my_script.sh"`).
+pub fn resolve_script(dir: &Path, name: &str) -> Result<PathBuf> {
+    // Derive the stem: strip the extension if one was given.
+    let stem = std::path::Path::new(name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name)
+        .to_string();
+
+    let folder_path = dir.join(&stem);
+
+    if folder_path.is_dir() {
+        // Try to locate the script file inside the folder.
+        if let Some(filename) = find_script_in_folder(&folder_path, &stem) {
+            let script_path = folder_path.join(filename);
+            if script_path.exists() {
+                return Ok(script_path);
+            }
+        }
+    }
+
+    Err(anyhow!(
+        "Script '{}' not found in {}",
+        name,
+        dir.display()
+    ))
 }
 
 // ── Public entry point ────────────────────────────────────────────────────────
@@ -111,6 +180,15 @@ pub fn execute(script_name: Option<String>) -> Result<()> {
             ));
         }
 
+        // Refuse to launch the interactive selector when stdin is not a TTY
+        // (e.g. in tests or when piped). FuzzySelect would hang indefinitely.
+        if !std::io::stdin().is_terminal() {
+            return Err(anyhow!(
+                "No script name given and stdin is not a TTY. \
+                 Run `dt run <script_name>` to specify a script directly."
+            ));
+        }
+
         let labels: Vec<String> = entries.iter().map(|e| e.display_label()).collect();
 
         let selection = FuzzySelect::new()
@@ -118,7 +196,9 @@ pub fn execute(script_name: Option<String>) -> Result<()> {
             .items(&labels)
             .interact()?;
 
-        scripts_dir.join(&entries[selection].filename)
+        // The filename is e.g. "my_script.sh"; the script lives at
+        // scripts_dir/my_script/my_script.sh — use resolve_script to find it.
+        resolve_script(&scripts_dir, &entries[selection].filename)?
     };
 
     // Execute the script, inheriting stdio so it feels like a native command.
@@ -163,6 +243,27 @@ mod tests {
         assert!(!display.contains("None"));
     }
 
+    // ── Helper: create the per-script folder layout ───────────────────────────
+
+    /// Creates `dir/<stem>/<stem>.<ext>` and optionally `dir/<stem>/meta.json`,
+    /// then returns the path to the script file.
+    fn make_script_folder(dir: &std::path::Path, stem: &str, ext: &str, description: Option<&str>) -> std::path::PathBuf {
+        let folder = dir.join(stem);
+        std::fs::create_dir_all(&folder).unwrap();
+        let script_path = folder.join(format!("{}.{}", stem, ext));
+        std::fs::write(&script_path, format!("#!/bin/bash\necho {}", stem)).unwrap();
+        if let Some(desc) = description {
+            std::fs::write(
+                folder.join("meta.json"),
+                format!(r#"{{"description":"{}"}}"#, desc),
+            )
+            .unwrap();
+        }
+        script_path
+    }
+
+    // ── discover_scripts ──────────────────────────────────────────────────────
+
     #[test]
     fn test_discover_scripts_empty_dir() {
         let dir = tempfile::tempdir().unwrap();
@@ -173,27 +274,22 @@ mod tests {
     #[test]
     fn test_discover_scripts_finds_sh_files() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("foo.sh"), "#!/bin/bash\necho hi").unwrap();
-        std::fs::write(dir.path().join("bar.sh"), "#!/bin/bash\necho bye").unwrap();
-        // A non-script file that should be ignored
-        std::fs::write(dir.path().join("foo.sh.meta.json"), r#"{"description":"d"}"#).unwrap();
+        make_script_folder(dir.path(), "foo", "sh", None);
+        make_script_folder(dir.path(), "bar", "sh", None);
+        // A loose file at the top level — must be ignored.
+        std::fs::write(dir.path().join("stray.sh"), "#!/bin/bash").unwrap();
 
         let entries = discover_scripts(dir.path()).unwrap();
         let names: Vec<&str> = entries.iter().map(|e| e.filename.as_str()).collect();
-        assert!(names.contains(&"foo.sh"));
-        assert!(names.contains(&"bar.sh"));
-        assert_eq!(entries.len(), 2, "meta.json sidecars must not appear as script entries");
+        assert!(names.contains(&"foo.sh"), "foo.sh should be discovered");
+        assert!(names.contains(&"bar.sh"), "bar.sh should be discovered");
+        assert_eq!(entries.len(), 2, "only per-folder scripts must appear");
     }
 
     #[test]
     fn test_discover_scripts_reads_description() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("foo.sh"), "#!/bin/bash\necho hi").unwrap();
-        std::fs::write(
-            dir.path().join("foo.sh.meta.json"),
-            r#"{"description":"Does something useful"}"#,
-        )
-        .unwrap();
+        make_script_folder(dir.path(), "foo", "sh", Some("Does something useful"));
 
         let entries = discover_scripts(dir.path()).unwrap();
         assert_eq!(entries.len(), 1);
@@ -203,8 +299,7 @@ mod tests {
     #[test]
     fn test_discover_scripts_missing_meta_gives_none() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("foo.sh"), "#!/bin/bash\necho hi").unwrap();
-        // No sidecar .meta.json
+        make_script_folder(dir.path(), "foo", "sh", None);
 
         let entries = discover_scripts(dir.path()).unwrap();
         assert_eq!(entries.len(), 1);
@@ -212,10 +307,47 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_script_exact_match() {
+    fn test_discover_scripts_skips_folder_without_script() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("foo.sh"), "#!/bin/bash\necho hi").unwrap();
+        // A folder that has no matching script file inside.
+        std::fs::create_dir_all(dir.path().join("empty_folder")).unwrap();
+        make_script_folder(dir.path(), "valid", "sh", None);
 
+        let entries = discover_scripts(dir.path()).unwrap();
+        let names: Vec<&str> = entries.iter().map(|e| e.filename.as_str()).collect();
+        assert_eq!(entries.len(), 1, "empty_folder must be skipped");
+        assert!(names.contains(&"valid.sh"));
+    }
+
+    #[test]
+    fn test_discover_scripts_js_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        make_script_folder(dir.path(), "myscript", "js", Some("A JS script"));
+
+        let entries = discover_scripts(dir.path()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].filename, "myscript.js");
+        assert_eq!(entries[0].description.as_deref(), Some("A JS script"));
+    }
+
+    // ── resolve_script ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_resolve_script_by_stem() {
+        let dir = tempfile::tempdir().unwrap();
+        make_script_folder(dir.path(), "foo", "sh", None);
+
+        // Resolve using just the stem.
+        let path = resolve_script(dir.path(), "foo").unwrap();
+        assert_eq!(path.file_name().unwrap(), "foo.sh");
+    }
+
+    #[test]
+    fn test_resolve_script_by_full_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        make_script_folder(dir.path(), "foo", "sh", None);
+
+        // Resolve using the full filename (stem + extension).
         let path = resolve_script(dir.path(), "foo.sh").unwrap();
         assert_eq!(path.file_name().unwrap(), "foo.sh");
     }

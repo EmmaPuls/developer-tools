@@ -18,10 +18,13 @@ use crate::utils::ai::{AcliRovodev, AiCallSpec, AiProvider, AiSession};
 pub const DEFAULT_SCRIPTS_DIR: &str = ".dt/scripts";
 
 /// The meta-prompt template sent to the AI for script generation.
-/// `{LANG}` and `{PROMPT}` are replaced at runtime via simple string substitution.
+/// `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` are replaced at runtime via simple string substitution.
 pub const ADD_META_PROMPT: &str = r#"
 You are a script generator. Given the user's requirements below, produce a
 shell script (or JavaScript script if instructed) that fulfils them.
+
+The script will be saved at:
+  $HOME/.dt/scripts/{SCRIPT_STEM}/{SCRIPT_STEM}.sh (or .js)
 
 Async-first rules (MANDATORY — do not omit):
 1. Identify EVERY value in the script that requires an AI response (any call
@@ -29,24 +32,30 @@ Async-first rules (MANDATORY — do not omit):
 2. Emit ALL of those as backgrounded `acli rovodev` calls at the very top of
    the script — before any other work. Capture each PID immediately:
        acli rovodev "<prompt>" \
-         --output-file=/tmp/dt_ai_<name>.json \
-         --output-schema="$HOME/.dt/resources/acli_add_schema.json" \
-         --config-file="$HOME/.dt/resources/config.ag-stack.yml" &
+         --output-file=$HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json \
+         --output-schema="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/acli_add_schema.json" \
+         --config-file="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/config.ag-stack.yml" &
        AI_<NAME>_PID=$!
 3. Proceed with ALL deterministic steps concurrently while the AI calls run
    in the background.
 4. Read each AI output file ONLY at the step that actually needs the value —
    and not before. Always wait on the PID first:
        wait $AI_<NAME>_PID
-       RESULT=$(jq -r '.value' /tmp/dt_ai_<name>.json)
-       rm -f /tmp/dt_ai_<name>.json
+       RESULT=$(jq -r '.value' $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json)
+       rm -f $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json
 5. Choose a short, descriptive snake_case filename with the correct extension
-   (.sh for Bash, .js for JavaScript).
-6. Return ONLY valid JSON in this exact shape — no markdown, no prose:
+   (.sh for Bash, .js for JavaScript). The filename stem MUST be {SCRIPT_STEM}.
+6. Determine what structured data each `acli rovodev` call in the script will
+   return and define an `output_schema` JSON Schema for it. Include that schema
+   verbatim in your JSON response under the key "output_schema". This schema
+   will be written to the script's resources/ folder and passed via
+   --output-schema to every acli rovodev call in the generated script.
+7. Return ONLY valid JSON in this exact shape — no markdown, no prose:
    {
-     "filename":    "<snake_case_name.ext>",
-     "description": "<one sentence describing what the script does>",
-     "script":      "<full script content as a single string>"
+     "filename":      "<snake_case_name.ext>",
+     "description":   "<one sentence describing what the script does>",
+     "script":        "<full script content as a single string>",
+     "output_schema": { <JSON Schema object for the script's acli rovodev calls> }
    }
 
 Target language: {LANG}
@@ -102,12 +111,14 @@ pub struct AddOutput {
     pub filename: Option<String>,
     pub description: Option<String>,
     pub script: Option<String>,
+    pub output_schema: Option<serde_json::Value>,
 }
 
 /// Sidecar metadata written alongside the saved script.
 #[derive(Serialize)]
 pub struct ScriptMeta {
     pub description: String,
+    pub original_prompt: String,
 }
 
 // ── Helper functions ──────────────────────────────────────────────────────────
@@ -121,11 +132,12 @@ fn strip_comment_lines(text: &str) -> String {
         .join("\n")
 }
 
-/// Substitutes `{LANG}` and `{PROMPT}` into `ADD_META_PROMPT`.
-pub fn build_add_prompt(user_requirements: &str, lang: &Lang) -> String {
+/// Substitutes `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` into `ADD_META_PROMPT`.
+pub fn build_add_prompt(user_requirements: &str, lang: &Lang, script_stem: &str) -> String {
     ADD_META_PROMPT
         .replace("{LANG}", lang.display_name())
         .replace("{PROMPT}", user_requirements)
+        .replace("{SCRIPT_STEM}", script_stem)
 }
 
 /// Resolves `~/.dt/scripts`, creating the directory if needed.
@@ -232,29 +244,72 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
         None => open_editor_for_prompt()?,
     };
 
-    // 2. Build full meta-prompt
-    let prompt = build_add_prompt(&user_requirements, &lang);
+    // 2. Phase A — ask the AI for just the script stem so we can inject
+    //    concrete paths into the main prompt before generating the script.
+    //    We send a lightweight prompt; the AI returns { "stem": "..." }.
+    #[derive(serde::Deserialize)]
+    struct StemOutput {
+        stem: Option<String>,
+    }
 
-    // 3. Set up AI resources (shared ~/.dt/resources/)
+    let stem_prompt = format!(
+        "Given these script requirements, respond with ONLY valid JSON containing a single \
+         field \"stem\" whose value is a short snake_case identifier (no extension) that \
+         would make a good filename stem for this script. No markdown, no prose.\n\n\
+         Requirements:\n{}",
+        user_requirements
+    );
+
     let provider = AcliRovodev;
-    let resources_dir = home_dir()
-        .ok_or_else(|| anyhow!("Could not determine home directory"))?
-        .join(".dt")
-        .join("resources");
+    let home = home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
+    let resources_dir = home.join(".dt").join("resources");
+
+    // Use the generic acli_schema.json (just { "stem": string }) for Phase A.
+    // We reuse setup_resources_with_schema with a minimal inline schema.
+    let stem_schema = br#"{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "stem": { "type": "string" }
+  },
+  "required": ["stem"]
+}"#;
+    let stem_paths = provider.setup_resources_with_schema(&resources_dir, stem_schema)?;
+    let stem_spec = AiCallSpec { prompt: stem_prompt };
+    let mut stem_session = AiSession::new(stem_paths.output_file.clone());
+
+    provider
+        .build_command(&stem_spec, &stem_paths)
+        .status()
+        .context("Failed to execute acli rovodev (phase A — stem)")?;
+
+    let stem_output = provider
+        .read_output::<StemOutput>(&mut stem_session)?
+        .ok_or_else(|| anyhow!("AI returned no output for stem query"))?;
+
+    let script_stem = stem_output
+        .stem
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("AI response missing 'stem'"))?;
+
+    drop(stem_session);
+
+    // 3. Phase B — build the full meta-prompt with concrete paths injected,
+    //    then ask the AI to generate the complete script + output_schema.
+    let prompt = build_add_prompt(&user_requirements, &lang, &script_stem);
+
     let paths = provider
         .setup_resources_with_schema(&resources_dir, AcliRovodev::add_schema_bytes())?;
 
-    // 4. Build spec + session
     let spec = AiCallSpec { prompt };
     let mut session = AiSession::new(paths.output_file.clone());
 
-    // 5. Run AI call — blocking (we need the script before we can save it)
     provider
         .build_command(&spec, &paths)
         .status()
-        .context("Failed to execute acli rovodev")?;
+        .context("Failed to execute acli rovodev (phase B — script)")?;
 
-    // 6. Parse output
+    // 4. Parse output
     let output = provider
         .read_output::<AddOutput>(&mut session)?
         .ok_or_else(|| anyhow!("AI returned no output or unparseable JSON"))?;
@@ -269,25 +324,90 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
         .script
         .ok_or_else(|| anyhow!("AI response missing 'script'"))?;
 
-    // 7. Save script
+    // 5. Save script into its own subdirectory
+    //    ~/.dt/scripts/<stem>/
+    //      <filename>        ← the script itself
+    //      meta.json         ← description / metadata
+    //      resources/        ← script-specific config / schemas
+    //      output/           ← empty dir for acli rovodev tmp output files
     let scripts_dir = resolve_scripts_dir()?;
-    let script_path = scripts_dir.join(&filename);
+
+    // Use the stem we got from Phase A (consistent with what was injected into the prompt).
+    // Fall back to deriving from the filename in case the AI changed it.
+    let stem_from_filename = Path::new(&filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename.as_str())
+        .to_string();
+    let final_stem = if !script_stem.is_empty() {
+        script_stem.clone()
+    } else {
+        stem_from_filename
+    };
+
+    let script_folder = scripts_dir.join(&final_stem);
+    fs::create_dir_all(&script_folder)
+        .with_context(|| format!("Failed to create script folder: {}", script_folder.display()))?;
+
+    // Create resources/ subdirectory.
+    let resources_folder = script_folder.join("resources");
+    fs::create_dir_all(&resources_folder)
+        .with_context(|| format!("Failed to create resources folder: {}", resources_folder.display()))?;
+
+    // Create output/ subdirectory (acli rovodev writes tmp files here at runtime).
+    let output_folder = script_folder.join("output");
+    fs::create_dir_all(&output_folder)
+        .with_context(|| format!("Failed to create output folder: {}", output_folder.display()))?;
+
+    // Write the task-specific schema to resources/acli_add_schema.json.
+    // If the AI returned an output_schema, use it; otherwise fall back to the
+    // generic single-value schema.
+    let schema_dest = resources_folder.join("acli_add_schema.json");
+    let task_schema_bytes = if let Some(ref schema_val) = output.output_schema {
+        serde_json::to_vec_pretty(schema_val)
+            .context("Failed to serialize AI-provided output_schema")?
+    } else {
+        include_bytes!("../resources/acli_schema.json").to_vec()
+    };
+    fs::write(&schema_dest, &task_schema_bytes)
+        .with_context(|| format!("Failed to write schema to {}", schema_dest.display()))?;
+
+    // Copy (or seed) config.ag-stack.yml into the per-script resources/ folder.
+    // We source it from ~/.dt/resources/ so any user edits there are propagated;
+    // fall back to the embedded template if it doesn't exist yet.
+    let global_config = home_dir()
+        .ok_or_else(|| anyhow!("Could not determine home directory"))?
+        .join(".dt")
+        .join("resources")
+        .join("config.ag-stack.yml");
+    let config_bytes: Vec<u8> = if global_config.exists() {
+        fs::read(&global_config)
+            .with_context(|| format!("Failed to read {}", global_config.display()))?
+    } else {
+        include_bytes!("../resources/config.ag-stack.yml").to_vec()
+    };
+    let config_dest = resources_folder.join("config.ag-stack.yml");
+    fs::write(&config_dest, &config_bytes)
+        .with_context(|| format!("Failed to write config to {}", config_dest.display()))?;
+
+    let script_path = script_folder.join(&filename);
     fs::write(&script_path, &script)
         .with_context(|| format!("Failed to write script to {}", script_path.display()))?;
     set_executable(&script_path)?;
 
-    // 8. Write sidecar .meta.json
-    let meta_path = scripts_dir.join(format!("{}.meta.json", filename));
+    // 6. Write meta.json inside the script folder.
+    let meta_path = script_folder.join("meta.json");
     let meta = ScriptMeta {
         description: description.clone(),
+        original_prompt: user_requirements.clone(),
     };
     fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)
         .with_context(|| format!("Failed to write metadata to {}", meta_path.display()))?;
 
-    // 9. AiSession cleanup (output file already deleted by read_output; this is a no-op)
+    // 7. AiSession cleanup (output file already deleted by read_output; this is a no-op)
     drop(session);
 
-    // 10. Print success
+    // 8. Print success
     println!("✓ Script saved to: {}", script_path.display());
     println!("  {}", description);
 
@@ -429,31 +549,56 @@ mod tests {
 
     #[test]
     fn test_build_add_prompt_substitutes_lang() {
-        let result = build_add_prompt("list all files", &Lang::Bash);
+        let result = build_add_prompt("list all files", &Lang::Bash, "list_files");
         assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
         assert!(result.to_lowercase().contains("bash"));
     }
 
     #[test]
     fn test_build_add_prompt_substitutes_prompt() {
-        let result = build_add_prompt("do the thing", &Lang::Bash);
+        let result = build_add_prompt("do the thing", &Lang::Bash, "do_thing");
         assert!(!result.contains("{PROMPT}"), "{{PROMPT}} placeholder must be replaced");
         assert!(result.contains("do the thing"));
     }
 
     #[test]
     fn test_build_add_prompt_js_language() {
-        let result = build_add_prompt("list all files", &Lang::Js);
+        let result = build_add_prompt("list all files", &Lang::Js, "list_files");
         assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
         let lower = result.to_lowercase();
         assert!(lower.contains("javascript") || lower.contains("js"));
+    }
+
+    #[test]
+    fn test_build_add_prompt_substitutes_script_stem() {
+        let result = build_add_prompt("do the thing", &Lang::Bash, "my_script");
+        assert!(!result.contains("{SCRIPT_STEM}"), "{{SCRIPT_STEM}} placeholder must be replaced");
+        assert!(result.contains("my_script"), "injected stem must appear in prompt");
+    }
+
+    #[test]
+    fn test_build_add_prompt_injects_literal_paths() {
+        let result = build_add_prompt("summarise logs", &Lang::Bash, "log_summary");
+        // The exact paths must appear literally so the AI cannot deviate.
+        assert!(
+            result.contains(".dt/scripts/log_summary/output/"),
+            "output path must contain stem"
+        );
+        assert!(
+            result.contains(".dt/scripts/log_summary/resources/acli_add_schema.json"),
+            "schema path must contain stem"
+        );
+        assert!(
+            result.contains(".dt/scripts/log_summary/resources/config.ag-stack.yml"),
+            "config path must contain stem"
+        );
     }
 
     // ── build_add_prompt ──────────────────────────────────────────────────────
 
     #[test]
     fn test_build_add_prompt_inline() {
-        let result = build_add_prompt("do x", &Lang::Bash);
+        let result = build_add_prompt("do x", &Lang::Bash, "do_x");
         assert!(result.contains("do x"), "prompt must include user requirements");
         assert!(
             result.to_lowercase().contains("bash"),
@@ -463,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_build_add_prompt_js() {
-        let result = build_add_prompt("do x", &Lang::Js);
+        let result = build_add_prompt("do x", &Lang::Js, "do_x");
         let lower = result.to_lowercase();
         assert!(
             lower.contains("javascript") || lower.contains("js"),
