@@ -7,9 +7,16 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use dirs::home_dir;
 use serde::{Deserialize, Serialize};
 
+use crate::commands::init::{
+    DtConfig,
+    META_PROMPT_ASYNC_FIRST,
+    META_PROMPT_FOOTER,
+    META_PROMPT_LOGGING,
+    META_PROMPT_NO_COLOUR,
+    META_PROMPT_PREAMBLE,
+};
 use crate::utils::ai::{AcliRovodev, AiCallSpec, AiProvider, AiSession};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -17,75 +24,272 @@ use crate::utils::ai::{AcliRovodev, AiCallSpec, AiProvider, AiSession};
 /// Default location where generated scripts are stored (relative to $HOME).
 pub const DEFAULT_SCRIPTS_DIR: &str = ".dt/scripts";
 
-/// The meta-prompt template sent to the AI for script generation.
-/// `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` are replaced at runtime via simple string substitution.
-pub const ADD_META_PROMPT: &str = r#"
-You are a script generator. Given the user's requirements below, produce a
-shell script (or JavaScript script if instructed) that fulfils them.
+// ── Prompt rule constants ─────────────────────────────────────────────────────
+//
+// These are aliases for the embedded file contents defined in `init.rs`.
+// The canonical text lives in `src/resources/meta_prompts/*.txt` (compiled in
+// via `include_str!`).  At runtime `assemble_prompt_rules` reads the user's
+// on-disk copies from `<dt_home>/meta_prompts/`, falling back to these
+// constants only when a file is absent.
+//
+// Tests that validate rule *content* should reference these constants directly.
 
-The script will be saved at:
-  $HOME/.dt/scripts/{SCRIPT_STEM}/{SCRIPT_STEM}.sh (or .js)
+/// Fixed preamble — always included, never toggled.
+const RULE_PREAMBLE: &str    = META_PROMPT_PREAMBLE;
+/// Logging helpers rule. Controlled by `AddConfig::rule_logging`.
+pub const RULE_LOGGING: &str     = META_PROMPT_LOGGING;
+/// No-colour accessibility rule. Controlled by `AddConfig::rule_no_colour`.
+pub const RULE_NO_COLOUR: &str   = META_PROMPT_NO_COLOUR;
+/// Async-first AI call rule. Controlled by `AddConfig::rule_async_first`.
+pub const RULE_ASYNC_FIRST: &str = META_PROMPT_ASYNC_FIRST;
+/// Fixed footer — always included, never toggled.
+const RULE_FOOTER: &str      = META_PROMPT_FOOTER;
 
-Logging functions (MANDATORY — include these verbatim near the top of every Bash script,
-immediately after the color definitions, and use them throughout):
+// ── AddConfig ─────────────────────────────────────────────────────────────────
 
-    # Logging helpers — controlled by DT_VERBOSE (set via `dt run --verbose`)
-    log() {
-        echo -e "$1"
+/// Per-rule toggles that control which sections are assembled into the meta-prompt.
+///
+/// Loaded from `~/.dt/config` (JSON).  Any key absent from the file defaults to
+/// `true` (the rule is enabled).  Users can disable a rule by setting it to
+/// `false` without recompiling `dt`.
+///
+/// Example `~/.dt/config`:
+/// ```json
+/// {
+///   "rule_logging":    true,
+///   "rule_no_colour":  false,
+///   "rule_async_first": true
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddConfig {
+    /// Include the standard `log()` / `verbose_log()` helpers and usage rules.
+    #[serde(default = "default_true")]
+    pub rule_logging: bool,
+
+    /// Forbid ANSI colour codes; require bold or plain text for emphasis.
+    #[serde(default = "default_true")]
+    pub rule_no_colour: bool,
+
+    /// Enforce the async-first AI call pattern in generated scripts.
+    #[serde(default = "default_true")]
+    pub rule_async_first: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for AddConfig {
+    fn default() -> Self {
+        Self {
+            rule_logging: true,
+            rule_no_colour: true,
+            rule_async_first: true,
+        }
     }
-    verbose_log() {
-        if [ "${DT_VERBOSE:-0}" = "1" ]; then
-            echo -e "$1"
-        fi
+}
+
+impl AddConfig {
+    /// Load config from `<dt_home>/add_config.json`.
+    ///
+    /// The `dt_home` root is resolved via `DtConfig::load()` so it respects
+    /// whatever directory the user set with `dt init` (default `~/.dt`).
+    /// If the file does not exist or cannot be parsed, returns
+    /// `AddConfig::default()` (all rules enabled).
+    pub fn load() -> Self {
+        let dt_home = DtConfig::load().dt_home;
+        let config_path = dt_home.join("add_config.json");
+        let Ok(contents) = fs::read_to_string(&config_path) else {
+            return Self::default();
+        };
+        serde_json::from_str::<Self>(&contents).unwrap_or_default()
     }
 
-Usage rules for logging functions:
-- Use log() for ALL user-facing output (status updates, results, prompts, errors).
-  Replace every bare `echo` with log().
-- Use verbose_log() for diagnostic/debug output that is only useful when
-  troubleshooting: variable values, intermediate state, timing information,
-  raw AI responses before parsing, file paths being operated on, etc.
-- Never use bare `echo` — always use log() or verbose_log().
-- Ensure there is meaningful verbose_log() output at every major step so that
-  `dt run --verbose` gives a useful trace of what the script is doing.
+    /// Persist the config to `<dt_home>/add_config.json`.
+    pub fn save(&self) -> anyhow::Result<()> {
+        let dt_home = DtConfig::load().dt_home;
+        fs::create_dir_all(&dt_home)
+            .with_context(|| format!("Failed to create dt home: {}", dt_home.display()))?;
+        let config_path = dt_home.join("add_config.json");
+        let json = serde_json::to_string_pretty(self)
+            .context("Failed to serialise AddConfig")?;
+        fs::write(&config_path, json)
+            .with_context(|| format!("Failed to write add config to {}", config_path.display()))?;
+        Ok(())
+    }
 
-Async-first rules (MANDATORY — do not omit):
-1. Identify EVERY value in the script that requires an AI response (any call
-   to `acli rovodev`).
-2. Emit ALL of those as backgrounded `acli rovodev` calls at the very top of
-   the script — before any other work. Capture each PID immediately:
-       acli rovodev "<prompt>" \
-         --output-file=$HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json \
-         --output-schema="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/acli_add_schema.json" \
-         --config-file="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/config.ag-stack.yml" &
-       AI_<NAME>_PID=$!
-3. Proceed with ALL deterministic steps concurrently while the AI calls run
-   in the background.
-4. Read each AI output file ONLY at the step that actually needs the value —
-   and not before. Always wait on the PID first:
-       wait $AI_<NAME>_PID
-       RESULT=$(jq -r '.value' $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json)
-       rm -f $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json
-5. Choose a short, descriptive snake_case filename with the correct extension
-   (.sh for Bash, .js for JavaScript). The filename stem MUST be {SCRIPT_STEM}.
-6. Determine what structured data each `acli rovodev` call in the script will
-   return and define an `output_schema` JSON Schema for it. Include that schema
-   verbatim in your JSON response under the key "output_schema". This schema
-   will be written to the script's resources/ folder and passed via
-   --output-schema to every acli rovodev call in the generated script.
-7. Return ONLY valid JSON in this exact shape — no markdown, no prose:
-   {
-     "filename":      "<snake_case_name.ext>",
-     "description":   "<one sentence describing what the script does>",
-     "script":        "<full script content as a single string>",
-     "output_schema": { <JSON Schema object for the script's acli rovodev calls> }
-   }
+    /// Returns a list of all rules as `(key, description, current_value)` triples.
+    /// Used by `dt add config` to display and edit rules.
+    pub fn rules(&self) -> Vec<(&'static str, &'static str, bool)> {
+        vec![
+            (
+                "rule_logging",
+                "Include log()/verbose_log() helpers in generated scripts",
+                self.rule_logging,
+            ),
+            (
+                "rule_no_colour",
+                "Forbid ANSI colour codes; use bold/plain text for emphasis (accessibility)",
+                self.rule_no_colour,
+            ),
+            (
+                "rule_async_first",
+                "Enforce async-first AI call pattern in generated scripts",
+                self.rule_async_first,
+            ),
+        ]
+    }
 
-Target language: {LANG}
+    /// Apply a `key=value` pair to this config in-place.
+    /// Returns an error if the key is unknown.
+    pub fn set_rule(&mut self, key: &str, value: bool) -> anyhow::Result<()> {
+        match key {
+            "rule_logging" => self.rule_logging = value,
+            "rule_no_colour" => self.rule_no_colour = value,
+            "rule_async_first" => self.rule_async_first = value,
+            other => anyhow::bail!("Unknown add config rule: '{}'", other),
+        }
+        Ok(())
+    }
+}
 
-User requirements:
-{PROMPT}
-"#;
+// ── dt add config subcommand ──────────────────────────────────────────────────
+
+/// Entry point for `dt add config`.
+///
+/// Lists all configurable rules with their current on/off state and lets the
+/// user toggle them interactively.  Changes are written back to
+/// `<dt_home>/add_config.json`.
+pub fn run_add_config() -> anyhow::Result<()> {
+    let mut cfg = AddConfig::load();
+    let dt_home = DtConfig::load().dt_home;
+    let config_path = dt_home.join("add_config.json");
+    let meta_prompts_dir = dt_home.join("meta_prompts");
+
+    // Ensure prompt files exist so the user can find them immediately.
+    crate::commands::init::seed_meta_prompts(&dt_home)
+        .context("Failed to seed meta-prompt files")?;
+
+    println!();
+    println!("  dt add config — manage script generation rules");
+    println!("  Config file:   {}", config_path.display());
+    println!("  Prompt files:  {}", meta_prompts_dir.display());
+    println!();
+    println!("  Rules control which .txt prompt files are included when generating");
+    println!("  scripts.  Edit the .txt files directly to change rule wording.");
+    println!("  Toggle a rule on/off by entering its number.");
+    println!();
+
+    loop {
+        // Print the current state of all rules.
+        let rules = cfg.rules();
+        for (i, (key, description, enabled)) in rules.iter().enumerate() {
+            let status = if *enabled { "✓ ON " } else { "✗ OFF" };
+            println!("  [{}]  {}  {}  ({})", i + 1, status, description, key);
+        }
+        println!();
+        println!("  Enter a rule number to toggle it, or press Enter to save and quit:");
+        print!("  > ");
+
+        use std::io::{self, Write};
+        io::stdout().flush().context("Failed to flush stdout")?;
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .context("Failed to read input")?;
+
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+
+        match trimmed.parse::<usize>() {
+            Ok(n) if n >= 1 && n <= rules.len() => {
+                let (key, _, current) = rules[n - 1];
+                cfg.set_rule(key, !current)?;
+                println!();
+            }
+            _ => {
+                println!("  Please enter a number between 1 and {}.", rules.len());
+                println!();
+            }
+        }
+    }
+
+    cfg.save()?;
+    crate::utils::ui::success(&format!(
+        "add config saved to {}",
+        config_path.display()
+    ));
+    Ok(())
+}
+
+/// Reads a meta-prompt rule file from `<dt_home>/meta_prompts/<filename>`.
+/// Falls back to the provided `fallback` string (the embedded Rust constant)
+/// if the file does not exist or cannot be read.
+fn read_rule_file(dt_home: &std::path::Path, filename: &str, fallback: &str) -> String {
+    let path = dt_home.join("meta_prompts").join(filename);
+    fs::read_to_string(&path).unwrap_or_else(|_| fallback.to_string())
+}
+
+/// Assembles the raw (un-substituted) meta-prompt from the enabled rules in `config`.
+///
+/// Each rule section is read from `<dt_home>/meta_prompts/<name>.txt` so users
+/// can edit the files directly to customise generation behaviour without
+/// recompiling `dt`.  If a file is missing the embedded default is used as a
+/// fallback.
+///
+/// Placeholders `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` are left in place for
+/// `build_add_prompt` to fill in.
+pub fn assemble_prompt_rules(config: &AddConfig) -> String {
+    let dt_home = DtConfig::load().dt_home;
+
+    let preamble   = read_rule_file(&dt_home, "preamble.txt",    RULE_PREAMBLE);
+    let logging    = read_rule_file(&dt_home, "logging.txt",     RULE_LOGGING);
+    let no_colour  = read_rule_file(&dt_home, "no_colour.txt",   RULE_NO_COLOUR);
+    let async_first = read_rule_file(&dt_home, "async_first.txt", RULE_ASYNC_FIRST);
+    let footer     = read_rule_file(&dt_home, "footer.txt",      RULE_FOOTER);
+
+    let mut parts: Vec<String> = vec![preamble];
+
+    if config.rule_logging {
+        parts.push(logging);
+    }
+    if config.rule_no_colour {
+        parts.push(no_colour);
+    }
+    if config.rule_async_first {
+        parts.push(async_first);
+    }
+
+    parts.push(footer);
+    parts.join("\n")
+}
+
+/// The default (all-rules-enabled) meta-prompt template, assembled from the
+/// embedded `.txt` files via `concat!` + `include_str!`.
+///
+/// This is a static string compiled into the binary — it reflects the default
+/// file content and does **not** pick up on-disk user edits.  At runtime,
+/// `assemble_prompt_rules(&AddConfig::default())` is used instead, which reads
+/// `<dt_home>/meta_prompts/*.txt` and falls back to this constant only when a
+/// file is absent.
+///
+/// Kept as a `pub const` so tests can validate default rule content without
+/// touching the filesystem.
+pub const ADD_META_PROMPT: &str = concat!(
+    include_str!("../resources/meta_prompts/preamble.txt"),
+    "\n",
+    include_str!("../resources/meta_prompts/logging.txt"),
+    "\n",
+    include_str!("../resources/meta_prompts/no_colour.txt"),
+    "\n",
+    include_str!("../resources/meta_prompts/async_first.txt"),
+    "\n",
+    include_str!("../resources/meta_prompts/footer.txt"),
+);
 
 /// Editor template pre-populated into the temp file when `dt add` is run without `-m`.
 const EDITOR_TEMPLATE: &str = r#"# dt add — describe the script you want to generate
@@ -155,19 +359,29 @@ fn strip_comment_lines(text: &str) -> String {
         .join("\n")
 }
 
-/// Substitutes `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` into `ADD_META_PROMPT`.
-pub fn build_add_prompt(user_requirements: &str, lang: &Lang, script_stem: &str) -> String {
-    ADD_META_PROMPT
+/// Substitutes `{LANG}`, `{PROMPT}`, and `{SCRIPT_STEM}` into the assembled meta-prompt.
+///
+/// The prompt is assembled from the rules enabled in `config` via
+/// `assemble_prompt_rules`.  Pass `&AddConfig::default()` to get the
+/// all-rules-enabled prompt (equivalent to the old `ADD_META_PROMPT` constant).
+pub fn build_add_prompt(
+    user_requirements: &str,
+    lang: &Lang,
+    script_stem: &str,
+    config: &AddConfig,
+) -> String {
+    assemble_prompt_rules(config)
         .replace("{LANG}", lang.display_name())
         .replace("{PROMPT}", user_requirements)
         .replace("{SCRIPT_STEM}", script_stem)
 }
 
-/// Resolves `~/.dt/scripts`, creating the directory if needed.
+/// Resolves `<dt_home>/scripts`, creating the directory if needed.
+///
+/// The `dt_home` root is resolved via `DtConfig::load()`, so it respects
+/// whatever the user configured with `dt init` (default `~/.dt`).
 pub fn resolve_scripts_dir() -> Result<PathBuf> {
-    let dir = home_dir()
-        .ok_or_else(|| anyhow!("Could not determine home directory"))?
-        .join(DEFAULT_SCRIPTS_DIR);
+    let dir = DtConfig::load().dt_home.join("scripts");
     fs::create_dir_all(&dir)
         .with_context(|| format!("Failed to create scripts directory: {}", dir.display()))?;
     Ok(dir)
@@ -284,8 +498,14 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
     );
 
     let provider = AcliRovodev;
-    let home = home_dir().ok_or_else(|| anyhow!("Could not determine home directory"))?;
-    let resources_dir = home.join(".dt").join("resources");
+    let dt_home = DtConfig::load().dt_home;
+
+    // Lazily seed meta-prompt files so users can edit them even if they never
+    // ran `dt init`.  Existing user-edited files are not overwritten.
+    crate::commands::init::seed_meta_prompts(&dt_home)
+        .context("Failed to seed meta-prompt files")?;
+
+    let resources_dir = dt_home.join("resources");
 
     // Use the generic acli_schema.json (just { "stem": string }) for Phase A.
     // We reuse setup_resources_with_schema with a minimal inline schema.
@@ -319,7 +539,8 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
 
     // 3. Phase B — build the full meta-prompt with concrete paths injected,
     //    then ask the AI to generate the complete script + output_schema.
-    let prompt = build_add_prompt(&user_requirements, &lang, &script_stem);
+    let add_config = AddConfig::load();
+    let prompt = build_add_prompt(&user_requirements, &lang, &script_stem, &add_config);
 
     let paths = provider
         .setup_resources_with_schema(&resources_dir, AcliRovodev::add_schema_bytes())?;
@@ -396,13 +617,9 @@ pub fn execute(message: Option<String>, lang: Lang) -> Result<()> {
         .with_context(|| format!("Failed to write schema to {}", schema_dest.display()))?;
 
     // Copy (or seed) config.ag-stack.yml into the per-script resources/ folder.
-    // We source it from ~/.dt/resources/ so any user edits there are propagated;
+    // We source it from <dt_home>/resources/ so any user edits there are propagated;
     // fall back to the embedded template if it doesn't exist yet.
-    let global_config = home_dir()
-        .ok_or_else(|| anyhow!("Could not determine home directory"))?
-        .join(".dt")
-        .join("resources")
-        .join("config.ag-stack.yml");
+    let global_config = dt_home.join("resources").join("config.ag-stack.yml");
     let config_bytes: Vec<u8> = if global_config.exists() {
         fs::read(&global_config)
             .with_context(|| format!("Failed to read {}", global_config.display()))?
@@ -570,23 +787,181 @@ mod tests {
         );
     }
 
+    // ── ADD_META_PROMPT: new rule content checks ──────────────────────────────
+
+    #[test]
+    fn test_meta_prompt_verbose_log_has_verbose_prefix() {
+        // verbose_log() must emit [VERBOSE] so users can identify diagnostic output.
+        assert!(
+            ADD_META_PROMPT.contains("[VERBOSE]"),
+            "ADD_META_PROMPT must include [VERBOSE] prefix in verbose_log output"
+        );
+    }
+
+    #[test]
+    fn test_meta_prompt_no_colour_rule_present() {
+        // The no-colour accessibility rule must be part of the default prompt.
+        let lower = ADD_META_PROMPT.to_lowercase();
+        assert!(
+            lower.contains("colour") || lower.contains("color"),
+            "ADD_META_PROMPT must mention the no-colour rule"
+        );
+        assert!(
+            lower.contains("bold"),
+            "ADD_META_PROMPT must instruct using bold instead of colour"
+        );
+    }
+
+    // ── RULE_* constants ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_logging_contains_verbose_prefix() {
+        assert!(
+            RULE_LOGGING.contains("[VERBOSE]"),
+            "RULE_LOGGING must include [VERBOSE] prefix in the verbose_log definition"
+        );
+    }
+
+    #[test]
+    fn test_rule_no_colour_mentions_bold() {
+        let lower = RULE_NO_COLOUR.to_lowercase();
+        assert!(lower.contains("bold"), "RULE_NO_COLOUR must instruct using bold");
+        assert!(
+            lower.contains("colour") || lower.contains("color"),
+            "RULE_NO_COLOUR must mention colour/color"
+        );
+    }
+
+    #[test]
+    fn test_rule_async_first_contains_background() {
+        let lower = RULE_ASYNC_FIRST.to_lowercase();
+        assert!(
+            lower.contains("background") || lower.contains("backgrounded"),
+            "RULE_ASYNC_FIRST must mention backgrounded calls"
+        );
+    }
+
+    // ── AddConfig ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_add_config_default_all_enabled() {
+        let cfg = AddConfig::default();
+        assert!(cfg.rule_logging, "rule_logging should default to true");
+        assert!(cfg.rule_no_colour, "rule_no_colour should default to true");
+        assert!(cfg.rule_async_first, "rule_async_first should default to true");
+    }
+
+    #[test]
+    fn test_add_config_deserialize_partial() {
+        // Keys absent from JSON should default to true.
+        let json = r#"{ "rule_logging": false }"#;
+        let cfg: AddConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.rule_logging, "rule_logging should be false");
+        assert!(cfg.rule_no_colour, "rule_no_colour should default to true");
+        assert!(cfg.rule_async_first, "rule_async_first should default to true");
+    }
+
+    #[test]
+    fn test_add_config_deserialize_all_false() {
+        let json = r#"{ "rule_logging": false, "rule_no_colour": false, "rule_async_first": false }"#;
+        let cfg: AddConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.rule_logging);
+        assert!(!cfg.rule_no_colour);
+        assert!(!cfg.rule_async_first);
+    }
+
+    // ── assemble_prompt_rules ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_assemble_prompt_all_rules_default() {
+        let prompt = assemble_prompt_rules(&AddConfig::default());
+        assert!(prompt.contains("{LANG}"), "assembled prompt must have {{LANG}} placeholder");
+        assert!(prompt.contains("{PROMPT}"), "assembled prompt must have {{PROMPT}} placeholder");
+        assert!(prompt.contains("{SCRIPT_STEM}"), "assembled prompt must have {{SCRIPT_STEM}} placeholder");
+        assert!(prompt.contains("[VERBOSE]"), "assembled prompt must include logging rule with [VERBOSE]");
+        assert!(prompt.to_lowercase().contains("bold"), "assembled prompt must include no-colour rule");
+        assert!(
+            prompt.to_lowercase().contains("background") || prompt.to_lowercase().contains("backgrounded"),
+            "assembled prompt must include async-first rule"
+        );
+    }
+
+    #[test]
+    fn test_assemble_prompt_logging_disabled() {
+        let cfg = AddConfig { rule_logging: false, ..AddConfig::default() };
+        let prompt = assemble_prompt_rules(&cfg);
+        assert!(
+            !prompt.contains("verbose_log"),
+            "logging rule should be absent when rule_logging=false"
+        );
+        // Other rules should still be present.
+        assert!(prompt.to_lowercase().contains("bold"));
+        assert!(
+            prompt.to_lowercase().contains("background") || prompt.to_lowercase().contains("backgrounded")
+        );
+    }
+
+    #[test]
+    fn test_assemble_prompt_no_colour_disabled() {
+        let cfg = AddConfig { rule_no_colour: false, ..AddConfig::default() };
+        let prompt = assemble_prompt_rules(&cfg);
+        assert!(
+            !prompt.to_lowercase().contains("accessibility"),
+            "no-colour rule should be absent when rule_no_colour=false"
+        );
+        // Logging and async rules should still be present.
+        assert!(prompt.contains("verbose_log"));
+        assert!(
+            prompt.to_lowercase().contains("background") || prompt.to_lowercase().contains("backgrounded")
+        );
+    }
+
+    #[test]
+    fn test_assemble_prompt_async_first_disabled() {
+        let cfg = AddConfig { rule_async_first: false, ..AddConfig::default() };
+        let prompt = assemble_prompt_rules(&cfg);
+        assert!(
+            !prompt.to_lowercase().contains("async-first"),
+            "async-first rule should be absent when rule_async_first=false"
+        );
+        // Logging and no-colour rules should still be present.
+        assert!(prompt.contains("verbose_log"));
+        assert!(prompt.to_lowercase().contains("bold"));
+    }
+
+    #[test]
+    fn test_assemble_prompt_all_rules_disabled_still_has_preamble_and_footer() {
+        let cfg = AddConfig {
+            rule_logging: false,
+            rule_no_colour: false,
+            rule_async_first: false,
+        };
+        let prompt = assemble_prompt_rules(&cfg);
+        // Preamble and footer are always present.
+        assert!(prompt.contains("script generator"), "preamble must always be present");
+        assert!(prompt.contains("{LANG}"), "footer must always be present");
+        assert!(prompt.contains("{PROMPT}"), "footer must always be present");
+    }
+
+    // ── build_add_prompt ──────────────────────────────────────────────────────
+
     #[test]
     fn test_build_add_prompt_substitutes_lang() {
-        let result = build_add_prompt("list all files", &Lang::Bash, "list_files");
+        let result = build_add_prompt("list all files", &Lang::Bash, "list_files", &AddConfig::default());
         assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
         assert!(result.to_lowercase().contains("bash"));
     }
 
     #[test]
     fn test_build_add_prompt_substitutes_prompt() {
-        let result = build_add_prompt("do the thing", &Lang::Bash, "do_thing");
+        let result = build_add_prompt("do the thing", &Lang::Bash, "do_thing", &AddConfig::default());
         assert!(!result.contains("{PROMPT}"), "{{PROMPT}} placeholder must be replaced");
         assert!(result.contains("do the thing"));
     }
 
     #[test]
     fn test_build_add_prompt_js_language() {
-        let result = build_add_prompt("list all files", &Lang::Js, "list_files");
+        let result = build_add_prompt("list all files", &Lang::Js, "list_files", &AddConfig::default());
         assert!(!result.contains("{LANG}"), "{{LANG}} placeholder must be replaced");
         let lower = result.to_lowercase();
         assert!(lower.contains("javascript") || lower.contains("js"));
@@ -594,14 +969,14 @@ mod tests {
 
     #[test]
     fn test_build_add_prompt_substitutes_script_stem() {
-        let result = build_add_prompt("do the thing", &Lang::Bash, "my_script");
+        let result = build_add_prompt("do the thing", &Lang::Bash, "my_script", &AddConfig::default());
         assert!(!result.contains("{SCRIPT_STEM}"), "{{SCRIPT_STEM}} placeholder must be replaced");
         assert!(result.contains("my_script"), "injected stem must appear in prompt");
     }
 
     #[test]
     fn test_build_add_prompt_injects_literal_paths() {
-        let result = build_add_prompt("summarise logs", &Lang::Bash, "log_summary");
+        let result = build_add_prompt("summarise logs", &Lang::Bash, "log_summary", &AddConfig::default());
         // The exact paths must appear literally so the AI cannot deviate.
         assert!(
             result.contains(".dt/scripts/log_summary/output/"),
@@ -617,11 +992,9 @@ mod tests {
         );
     }
 
-    // ── build_add_prompt ──────────────────────────────────────────────────────
-
     #[test]
     fn test_build_add_prompt_inline() {
-        let result = build_add_prompt("do x", &Lang::Bash, "do_x");
+        let result = build_add_prompt("do x", &Lang::Bash, "do_x", &AddConfig::default());
         assert!(result.contains("do x"), "prompt must include user requirements");
         assert!(
             result.to_lowercase().contains("bash"),
@@ -631,12 +1004,23 @@ mod tests {
 
     #[test]
     fn test_build_add_prompt_js() {
-        let result = build_add_prompt("do x", &Lang::Js, "do_x");
+        let result = build_add_prompt("do x", &Lang::Js, "do_x", &AddConfig::default());
         let lower = result.to_lowercase();
         assert!(
             lower.contains("javascript") || lower.contains("js"),
             "prompt must mention javascript or js"
         );
+    }
+
+    #[test]
+    fn test_build_add_prompt_respects_config_toggles() {
+        // With logging disabled, verbose_log should not appear in the output.
+        let cfg = AddConfig { rule_logging: false, ..AddConfig::default() };
+        let result = build_add_prompt("do x", &Lang::Bash, "do_x", &cfg);
+        assert!(!result.contains("verbose_log"), "verbose_log must not appear when rule_logging=false");
+        // Preamble and user requirements must still be present.
+        assert!(result.contains("do x"));
+        assert!(result.to_lowercase().contains("bash"));
     }
 
     // ── Lang ─────────────────────────────────────────────────────────────────

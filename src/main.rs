@@ -10,7 +10,7 @@ enum RovoCommands {
 mod commands;
 mod utils;
 
-use commands::{add, checkout, fixup, rovo, run, squash};
+use commands::{add, checkout, fixup, init, rovo, run, squash};
 
 #[derive(Parser)]
 #[command(name = "dt")]
@@ -67,8 +67,12 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
+    /// Initialise or update the dt application directory
+    Init,
     /// Generate a script using AI from a prompt or interactive editor session
     Add {
+        #[command(subcommand)]
+        subcommand: Option<AddSubcommand>,
         /// Describe the script to generate (skips editor if provided)
         #[arg(short, long)]
         message: Option<String>,
@@ -90,6 +94,12 @@ enum Commands {
 enum FixupSubcommand {
     /// Initialize or update the fixup configuration file
     Init,
+}
+
+#[derive(Subcommand)]
+enum AddSubcommand {
+    /// View and interactively edit script generation rules
+    Config,
 }
 
 fn main() -> Result<()> {
@@ -122,10 +132,18 @@ fn main() -> Result<()> {
             Some(FixupSubcommand::Init) => fixup::run_init(verbose)?,
             None => fixup::run_fixup(verbose)?,
         },
-        Commands::Add { message, lang } => {
-            let lang = add::Lang::from_str(&lang)?;
-            add::execute(message, lang)?;
+        Commands::Init => {
+            init::execute()?;
         }
+        Commands::Add { subcommand, message, lang } => match subcommand {
+            Some(AddSubcommand::Config) => {
+                add::run_add_config()?;
+            }
+            None => {
+                let lang = add::Lang::from_str(&lang)?;
+                add::execute(message, lang)?;
+            }
+        },
         Commands::Run { script_name, verbose } => {
             run::execute(script_name, verbose)?;
         }
