@@ -80,6 +80,9 @@ enum Commands {
     Run {
         /// Name of the script to run (omit for interactive fuzzy list)
         script_name: Option<String>,
+        /// Enable verbose logging in the script (sets DT_VERBOSE=1)
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -123,8 +126,8 @@ fn main() -> Result<()> {
             let lang = add::Lang::from_str(&lang)?;
             add::execute(message, lang)?;
         }
-        Commands::Run { script_name } => {
-            run::execute(script_name)?;
+        Commands::Run { script_name, verbose } => {
+            run::execute(script_name, verbose)?;
         }
     }
 

@@ -26,6 +26,29 @@ shell script (or JavaScript script if instructed) that fulfils them.
 The script will be saved at:
   $HOME/.dt/scripts/{SCRIPT_STEM}/{SCRIPT_STEM}.sh (or .js)
 
+Logging functions (MANDATORY — include these verbatim near the top of every Bash script,
+immediately after the color definitions, and use them throughout):
+
+    # Logging helpers — controlled by DT_VERBOSE (set via `dt run --verbose`)
+    log() {
+        echo -e "$1"
+    }
+    verbose_log() {
+        if [ "${DT_VERBOSE:-0}" = "1" ]; then
+            echo -e "$1"
+        fi
+    }
+
+Usage rules for logging functions:
+- Use log() for ALL user-facing output (status updates, results, prompts, errors).
+  Replace every bare `echo` with log().
+- Use verbose_log() for diagnostic/debug output that is only useful when
+  troubleshooting: variable values, intermediate state, timing information,
+  raw AI responses before parsing, file paths being operated on, etc.
+- Never use bare `echo` — always use log() or verbose_log().
+- Ensure there is meaningful verbose_log() output at every major step so that
+  `dt run --verbose` gives a useful trace of what the script is doing.
+
 Async-first rules (MANDATORY — do not omit):
 1. Identify EVERY value in the script that requires an AI response (any call
    to `acli rovodev`).

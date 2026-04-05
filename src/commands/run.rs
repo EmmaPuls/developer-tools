@@ -163,7 +163,10 @@ pub fn resolve_script(dir: &Path, name: &str) -> Result<PathBuf> {
 // ── Public entry point ────────────────────────────────────────────────────────
 
 /// Main entry point for `dt run`.
-pub fn execute(script_name: Option<String>) -> Result<()> {
+///
+/// When `verbose` is `true`, the environment variable `DT_VERBOSE=1` is set
+/// for the child script process so that scripts can gate verbose output on it.
+pub fn execute(script_name: Option<String>, verbose: bool) -> Result<()> {
     let scripts_dir = add::resolve_scripts_dir()?;
 
     let script_path = if let Some(name) = script_name {
@@ -202,7 +205,13 @@ pub fn execute(script_name: Option<String>) -> Result<()> {
     };
 
     // Execute the script, inheriting stdio so it feels like a native command.
-    let status = std::process::Command::new(&script_path).status()?;
+    // When --verbose is passed, inject DT_VERBOSE=1 so the script can gate
+    // verbose output on that variable.
+    let mut cmd = std::process::Command::new(&script_path);
+    if verbose {
+        cmd.env("DT_VERBOSE", "1");
+    }
+    let status = cmd.status()?;
 
     if !status.success() {
         return Err(anyhow!(
