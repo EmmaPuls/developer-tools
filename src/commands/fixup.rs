@@ -36,7 +36,7 @@ impl Default for FixupOptions {
         Self {
             author_name: "Emma Puls".to_string(),
             stack_pattern: "^stack/".to_string(),
-            pull_request_keyword: "Pull Request".to_string(),
+            pull_request_keyword: "atl-pull-request".to_string(),
             acli_message: "Look at the staged changes in git and provide a commit message that would be appropriate for these changes. The message should be concise but descriptive, ideally starting with a verb in the present tense.".to_string(),
             acli_output_file:
                 "../fixup/resources/acli_rovodev_output.json".to_string(),
