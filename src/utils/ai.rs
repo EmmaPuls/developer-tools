@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 // ── Embedded resource bytes ───────────────────────────────────────────────────
 
 const ACLI_SCHEMA_TEMPLATE: &[u8] = include_bytes!("../resources/acli_schema.json");
+const ACLI_ADD_SCHEMA_TEMPLATE: &[u8] = include_bytes!("../resources/acli_add_schema.json");
 const ACLI_CONFIG_TEMPLATE: &[u8] = include_bytes!("../resources/config.ag-stack.yml");
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -115,6 +116,40 @@ impl AiProvider for AcliRovodev {
         let parsed = serde_json::from_str::<T>(&data).ok();
         session.cleanup();
         Ok(parsed)
+    }
+}
+
+impl AcliRovodev {
+    /// Like `setup_resources` but writes `schema_bytes` as the schema file
+    /// instead of the embedded `acli_schema.json`. Use this when the caller
+    /// needs a schema that differs from the default fixup schema.
+    pub fn setup_resources_with_schema(
+        &self,
+        dir: &Path,
+        schema_bytes: &[u8],
+    ) -> Result<AiPaths> {
+        fs::create_dir_all(dir)?;
+
+        let schema_file = dir.join("acli_add_schema.json");
+        let config_file = dir.join("config.ag-stack.yml");
+        let output_file = dir.join("acli_rovodev_output.json");
+
+        // Always (re-)write the schema so updates take effect.
+        fs::write(&schema_file, schema_bytes)?;
+        if !config_file.exists() {
+            fs::write(&config_file, ACLI_CONFIG_TEMPLATE)?;
+        }
+
+        Ok(AiPaths {
+            output_file,
+            schema_file,
+            config_file,
+        })
+    }
+
+    /// Returns the embedded bytes for the `dt add` JSON schema.
+    pub fn add_schema_bytes() -> &'static [u8] {
+        ACLI_ADD_SCHEMA_TEMPLATE
     }
 }
 

@@ -1,0 +1,32 @@
+
+Async-first rules (MANDATORY — do not omit):
+1. Identify EVERY value in the script that requires an AI response (any call
+   to `acli rovodev`).
+2. Emit ALL of those as backgrounded `acli rovodev` calls at the very top of
+   the script — before any other work. Capture each PID immediately:
+       acli rovodev "<prompt>" \
+         --output-file=$HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json \
+         --output-schema="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/acli_add_schema.json" \
+         --config-file="$HOME/.dt/scripts/{SCRIPT_STEM}/resources/config.ag-stack.yml" &
+       AI_<NAME>_PID=$!
+3. Proceed with ALL deterministic steps concurrently while the AI calls run
+   in the background.
+4. Read each AI output file ONLY at the step that actually needs the value —
+   and not before. Always wait on the PID first:
+       wait $AI_<NAME>_PID
+       RESULT=$(jq -r '.value' $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json)
+       rm -f $HOME/.dt/scripts/{SCRIPT_STEM}/output/tmp_dt_ai_<name>.json
+5. Choose a short, descriptive snake_case filename with the correct extension
+   (.sh for Bash, .js for JavaScript). The filename stem MUST be {SCRIPT_STEM}.
+6. Determine what structured data each `acli rovodev` call in the script will
+   return and define an `output_schema` JSON Schema for it. Include that schema
+   verbatim in your JSON response under the key "output_schema". This schema
+   will be written to the script's resources/ folder and passed via
+   --output-schema to every acli rovodev call in the generated script.
+7. Return ONLY valid JSON in this exact shape — no markdown, no prose:
+   {
+     "filename":      "<snake_case_name.ext>",
+     "description":   "<one sentence describing what the script does>",
+     "script":        "<full script content as a single string>",
+     "output_schema": { <JSON Schema object for the script's acli rovodev calls> }
+   }

@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "filename": {
+      "type": "string",
+      "description": "Short snake_case filename for the generated script, including extension (.sh or .js)."
+    },
+    "description": {
+      "type": "string",
+      "description": "One sentence describing what the script does."
+    },
+    "script": {
+      "type": "string",
+      "description": "Full script content as a single string."
+    },
+    "output_schema": {
+      "type": "object",
+      "description": "JSON Schema for the output of acli rovodev calls made within the generated script."
+    }
+  },
+  "required": ["filename", "description", "script", "output_schema"]
+}

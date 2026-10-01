@@ -1,0 +1,8 @@
+
+Accessibility rule (MANDATORY):
+- Do NOT use ANSI colour escape codes (e.g. \033[31m, \e[32m, tput setaf) for
+  emphasis or to highlight text.
+- Use bold formatting instead where available (e.g. \033[1m ... \033[0m), or
+  plain text if the context does not support bold.
+- This ensures output remains readable for users with colour-blindness or on
+  terminals that do not support colour.
