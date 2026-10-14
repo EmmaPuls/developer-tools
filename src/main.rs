@@ -10,7 +10,8 @@ enum RovoCommands {
 mod commands;
 mod utils;
 
-use commands::{checkout, fixup, rovo, squash};
+use commands::{checkout, fixup, rovo, skills, squash};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "dt")]
@@ -67,6 +68,67 @@ enum Commands {
         #[arg(long)]
         verbose: bool,
     },
+    /// List, install, enable and disable Claude skills
+    Skills {
+        #[command(subcommand)]
+        command: Option<SkillsCommands>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillsCommands {
+    /// List all Claude skills, where they live and whether they're on
+    ///
+    /// Columns: STATE is on/off, MODEL is whether Claude can invoke it itself, SOURCE is where it comes from, PATH is its folder.
+    List {
+        /// Also look for project skills in this repo (repeatable; defaults to the current repo)
+        #[arg(long = "repo")]
+        repos: Vec<PathBuf>,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable global skills (removes the override)
+    Enable {
+        /// Skill names
+        #[arg(required = true)]
+        names: Vec<String>,
+        /// Show what would happen without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Disable global skills (sets skillOverrides to "off")
+    Disable {
+        /// Skill names
+        #[arg(required = true)]
+        names: Vec<String>,
+        /// Show what would happen without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Install a skill from a local directory, git URL or owner/repo
+    Install {
+        /// Local path, git URL or owner/repo
+        source: String,
+        /// Subdirectory of the source containing the skill(s)
+        #[arg(long)]
+        path: Option<String>,
+        /// Install under this name (single skill only)
+        #[arg(long)]
+        name: Option<String>,
+        /// Install enabled
+        #[arg(long)]
+        on: bool,
+        /// Install disabled
+        #[arg(long)]
+        off: bool,
+        /// Overwrite an existing skill
+        #[arg(long)]
+        force: bool,
+        /// Show what would happen without executing
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -104,6 +166,33 @@ fn main() -> Result<()> {
         Commands::Fixup { command, verbose } => match command {
             Some(FixupSubcommand::Init) => fixup::run_init(verbose)?,
             None => fixup::run_fixup(verbose)?,
+        },
+        Commands::Skills { command } => match command {
+            None => skills::run_list(Vec::new(), false)?,
+            Some(SkillsCommands::List { repos, json }) => skills::run_list(repos, json)?,
+            Some(SkillsCommands::Enable { names, dry_run }) => {
+                skills::run_toggle(names, true, dry_run)?
+            }
+            Some(SkillsCommands::Disable { names, dry_run }) => {
+                skills::run_toggle(names, false, dry_run)?
+            }
+            Some(SkillsCommands::Install {
+                source,
+                path,
+                name,
+                on,
+                off,
+                force,
+                dry_run,
+            }) => skills::run_install(skills::InstallOptions {
+                source,
+                path,
+                name,
+                on,
+                off,
+                force,
+                dry_run,
+            })?,
         },
     }
 
