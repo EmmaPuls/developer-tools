@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import OSLog
 import Observation
@@ -10,6 +11,7 @@ final class AppModel {
     private(set) var rules: [Rule] = []
     private(set) var loadError: String?
     private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
+    private(set) var missingShortcuts: [String] = []
 
     private let monitor = MeetingMonitor()
     private let actionQueue = DispatchQueue(label: "ZoomFocus.actions")
@@ -24,6 +26,31 @@ final class AppModel {
             DispatchQueue.main.async { self?.meetingChanged(meeting) }
         }
         monitor.start()
+        refreshShortcuts()
+        DispatchQueue.main.async { self.offerShortcutSetupIfNeeded() }
+    }
+
+    func refreshShortcuts() {
+        missingShortcuts = ShortcutSetup.missingNames()
+    }
+
+    /// Shows the manual steps for the missing shortcuts, with a button to open the Shortcuts app.
+    func showSetupSteps() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Missing shortcuts: \(missingShortcuts.joined(separator: ", "))"
+        alert.informativeText = ShortcutSetup.manualSteps
+        alert.addButton(withTitle: "Open Shortcuts")
+        alert.addButton(withTitle: "Close")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Shortcuts.app"))
+        }
+    }
+
+    /// Shows the setup steps at launch while shortcuts are missing. "Check Shortcuts" in the menu re-checks.
+    private func offerShortcutSetupIfNeeded() {
+        guard !missingShortcuts.isEmpty else { return }
+        showSetupSteps()
     }
 
     func setEnabled(_ on: Bool) {

@@ -39,6 +39,20 @@ private struct MenuContent: View {
 
         Divider()
 
+        if model.missingShortcuts.isEmpty {
+            Text("Zoom DND shortcuts: installed")
+        } else {
+            Text("Missing shortcuts: \(model.missingShortcuts.joined(separator: ", "))")
+            Button("Show Setup Steps") {
+                model.showSetupSteps()
+            }
+        }
+        Button("Check Shortcuts") {
+            model.refreshShortcuts()
+        }
+
+        Divider()
+
         Button("Open Rules File") {
             NSWorkspace.shared.open(RuleStore.url)
         }
