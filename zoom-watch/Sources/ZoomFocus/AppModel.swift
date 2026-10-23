@@ -34,6 +34,16 @@ final class AppModel {
         missingShortcuts = ShortcutSetup.missingNames()
     }
 
+    /// Opens the bundled shortcut files for the missing shortcuts. Shortcuts asks the user to confirm each one.
+    func addMissingShortcuts() {
+        let files = missingShortcuts.compactMap(ShortcutSetup.bundledFile(for:))
+        guard files.count == missingShortcuts.count else {
+            showSetupSteps()
+            return
+        }
+        files.forEach { NSWorkspace.shared.open($0) }
+    }
+
     /// Shows the manual steps for the missing shortcuts, with a button to open the Shortcuts app.
     func showSetupSteps() {
         NSApp.activate(ignoringOtherApps: true)
@@ -47,10 +57,19 @@ final class AppModel {
         }
     }
 
-    /// Shows the setup steps at launch while shortcuts are missing. "Check Shortcuts" in the menu re-checks.
+    /// Offers to add the missing shortcuts at launch. "Check Shortcuts" in the menu re-checks.
     private func offerShortcutSetupIfNeeded() {
         guard !missingShortcuts.isEmpty else { return }
-        showSetupSteps()
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Add the Zoom DND shortcuts?"
+        alert.informativeText = "ZoomFocus runs these shortcuts. Missing: \(missingShortcuts.joined(separator: ", ")). "
+            + "Shortcuts will ask you to confirm each one."
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Not Now")
+        if alert.runModal() == .alertFirstButtonReturn {
+            addMissingShortcuts()
+        }
     }
 
     func setEnabled(_ on: Bool) {

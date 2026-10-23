@@ -43,6 +43,9 @@ private struct MenuContent: View {
             Text("Zoom DND shortcuts: installed")
         } else {
             Text("Missing shortcuts: \(model.missingShortcuts.joined(separator: ", "))")
+            Button("Add Missing Shortcuts") {
+                model.addMissingShortcuts()
+            }
             Button("Show Setup Steps") {
                 model.showSetupSteps()
             }

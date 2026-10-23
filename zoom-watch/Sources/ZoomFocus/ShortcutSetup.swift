@@ -17,6 +17,11 @@ enum ShortcutSetup {
     The wording in Shortcuts may differ slightly between macOS versions.
     """
 
+    /// The exported shortcut bundled into the app. Opening it makes Shortcuts ask the user to add it.
+    static func bundledFile(for name: String) -> URL? {
+        Bundle.main.url(forResource: name, withExtension: "shortcut")
+    }
+
     static func missingNames() -> [String] {
         let installed = installedNames()
         return names.filter { !installed.contains($0) }
