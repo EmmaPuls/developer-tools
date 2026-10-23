@@ -3,21 +3,44 @@
 A menu bar app for macOS. When Zoom has your camera or microphone open, it runs
 the "Zoom DND On" Shortcut. When the call ends, it always runs "Zoom DND Off".
 
-## Setup
+## Install
 
-1. Create two Shortcuts in the Shortcuts app, named exactly:
-   - `Zoom DND On`: Set Focus to Do Not Disturb, turn on
-   - `Zoom DND Off`: Set Focus to Do Not Disturb, turn off
-2. Build the app:
+There are two ways to install ZoomFocus. Both end with the app in your menu bar and
+two Shortcuts, "Zoom DND On" and "Zoom DND Off", in your Shortcuts library.
+
+### Option 1: Disk image (no terminal)
+
+1. Open `ZoomFocus.dmg` and drag **ZoomFocus** into **Applications**.
+2. Open ZoomFocus from Applications. macOS will block it, because the app isn't
+   signed with an Apple Developer ID. To allow it, open **System Settings → Privacy &
+   Security**, find the message about ZoomFocus, click **Open Anyway**, and confirm.
+   You only need to do this once.
+3. When ZoomFocus opens, it offers to add the two shortcuts. Click **Add**. Shortcuts
+   opens each one, and you confirm each import.
+4. Turn on **Launch at Login** from the menu bar item.
+
+To build the disk image yourself, run `./scripts/build-dmg.sh`. The image is written to
+`dist/ZoomFocus.dmg`.
+
+### Option 2: Build from source (terminal)
+
+1. Build the app. This needs the Swift toolchain, from Xcode or the Command Line Tools:
 
    ```sh
    ./scripts/build-app.sh
    open ZoomFocus.app
    ```
 
+2. When ZoomFocus opens, it offers to add the two shortcuts. Click **Add**, then confirm
+   each import in Shortcuts.
 3. Turn on **Launch at Login** from the menu bar item.
 
-The first time the app runs Shortcuts, macOS may ask you to allow it.
+### Adding the shortcuts later
+
+If you deleted the shortcuts or skipped the prompt, click the ZoomFocus menu bar icon,
+choose **Check Shortcuts**, then **Add Missing Shortcuts**. Run **Check Shortcuts**
+first. The list of missing shortcuts is refreshed at launch and by that menu item.
+If something goes wrong, **Show Setup Steps** lists how to create the shortcuts by hand.
 
 ## Rules
 
