@@ -12,8 +12,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 bin="$HOME/.local/bin"
 workflow="$HOME/Library/Services/Capture Text.workflow"
 service="Capture Text"
-# Services shortcut format: @ = Command, $ = Shift, 2 = key.
-shortcut='@$2'
+# Services shortcut format: @ = Command, and the character typed with Shift.
+# On a US keyboard ⌘⇧2 types "@", so the value is Command + "@".
+shortcut='@@'
 
 mkdir -p "$bin"
 swiftc -O "$here/capture-text-ocr.swift" -o "$bin/capture-text-ocr"
