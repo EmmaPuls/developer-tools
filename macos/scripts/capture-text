@@ -12,6 +12,11 @@ trap 'rm -f "$img"' EXIT
 stamp() { /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
 log() { printf '%s %s\n' "$(stamp)" "$*" >> "$log_file"; }
 
+# Keep only the last 500 lines so the log doesn't grow without limit.
+if [ -f "$log_file" ] && [ "$(wc -l < "$log_file")" -gt 500 ]; then
+  tail -n 500 "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
+fi
+
 log "start"
 /usr/sbin/screencapture -i -x "$img" || { log "cancelled"; exit 0; }
 [ -s "$img" ] || { log "cancelled (empty image)"; exit 0; }
