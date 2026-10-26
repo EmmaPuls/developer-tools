@@ -12,9 +12,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 bin="$HOME/.local/bin"
 workflow="$HOME/Library/Services/Capture Text.workflow"
 service="Capture Text"
-# Services shortcut format: @ = Command, and the character typed with Shift.
-# On a US keyboard ⌘⇧2 types "@", so the value is Command + "@".
-shortcut='@@'
+# Services shortcut format: @ = Command, $ = Shift, then the key. Must match
+# NSKeyEquivalent in the Info.plist below.
+shortcut='@$2'
 
 mkdir -p "$bin"
 swiftc -O "$here/capture-text-ocr.swift" -o "$bin/capture-text-ocr"
@@ -40,6 +40,11 @@ cat > "$workflow/Contents/Info.plist" <<'EOF'
 	<key>NSServices</key>
 	<array>
 		<dict>
+			<key>NSKeyEquivalent</key>
+			<dict>
+				<key>default</key>
+				<string>@$2</string>
+			</dict>
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
