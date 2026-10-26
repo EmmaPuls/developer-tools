@@ -1,0 +1,17 @@
+#!/bin/bash
+# Select an area of the screen and copy the text in it to the clipboard.
+# Installed by install-capture-text.sh.
+set -euo pipefail
+
+ocr="$HOME/.local/bin/capture-text-ocr"
+img=$(mktemp -t capture-text).png
+trap 'rm -f "$img"' EXIT
+
+# screencapture exits non-zero when the selection is cancelled.
+/usr/sbin/screencapture -i -x "$img" || exit 0
+[ -s "$img" ] || exit 0
+
+text=$("$ocr" "$img")
+if [ -n "$text" ]; then
+  printf '%s\n' "$text" | pbcopy
+fi
