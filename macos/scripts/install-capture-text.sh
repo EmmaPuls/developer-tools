@@ -184,7 +184,9 @@ cat > "$workflow/Contents/document.wflow" <<EOF
 EOF
 
 # Bind ⌘⇧2 to the service and refresh the Services menu.
-defaults write pbs NSServicesStatus -dict-add "(null) - $service - runWorkflowAsService" "{ key_equivalent = \"$shortcut\"; enabled_services_menu = 1; }"
+# The key must be a quoted plist string: it starts with "(", which defaults
+# would otherwise try to parse as an array.
+defaults write pbs NSServicesStatus -dict-add "\"(null) - $service - runWorkflowAsService\"" "{ key_equivalent = \"$shortcut\"; enabled_services_menu = 1; }"
 /System/Library/CoreServices/pbs -flush
 /System/Library/CoreServices/pbs -update
 
