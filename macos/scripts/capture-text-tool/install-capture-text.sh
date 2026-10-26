@@ -16,17 +16,7 @@ agent="$HOME/Library/LaunchAgents/$label.plist"
 uid=$(id -u)
 
 mkdir -p "$bin" "$HOME/Library/LaunchAgents"
-swiftc -O "$here/capture-text-ocr.swift" -o "$bin/capture-text-ocr"
 swiftc -O "$here/capture-text-daemon.swift" -o "$bin/capture-text-daemon"
-install -m 755 "$here/capture-text" "$bin/capture-text"
-
-# Earlier versions used a Services Quick Action for the shortcut. Remove it
-# and its Services entry so only the daemon handles ⌘⇧2.
-rm -rf "$HOME/Library/Services/Capture Text.workflow"
-/usr/libexec/PlistBuddy -c "Delete :'(null) - Capture Text - runWorkflowAsService'" \
-  "$HOME/Library/Preferences/pbs.plist" 2>/dev/null || true
-/System/Library/CoreServices/pbs -flush
-/System/Library/CoreServices/pbs -update
 
 # Start the daemon at login and keep it running. Restart it if already loaded.
 launchctl bootout "gui/$uid/$label" 2>/dev/null || true

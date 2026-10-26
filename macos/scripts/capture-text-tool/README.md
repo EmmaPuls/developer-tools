@@ -12,10 +12,8 @@ Requires the Xcode command line tools, for `swiftc`. If you don't have them, run
 
 The installer:
 
-- compiles the OCR helper and the hotkey daemon into `~/.local/bin`
-- installs the `capture-text` script into `~/.local/bin`
-- starts `capture-text-daemon` at login with a LaunchAgent (`~/Library/LaunchAgents/local.capture-text.plist`)
-- removes the older Services Quick Action, if you installed one before
+- compiles `capture-text-daemon` into `~/.local/bin`
+- starts it at login with a LaunchAgent (`~/Library/LaunchAgents/local.capture-text.plist`)
 
 It's safe to re-run.
 
@@ -41,7 +39,7 @@ Press Esc during the selection to cancel. Pressing ⌘⇧2 again while a capture
 
 Timings and errors are logged to:
 
-- `~/Library/Logs/capture-text.log`: one entry per capture, with image size and OCR time. The file keeps the last 500 lines.
+- `~/Library/Logs/capture-text.log`: one entry per capture, with selection size, line count, and OCR time. The file keeps the last 500 lines.
 - `~/Library/Logs/capture-text-daemon.log`: startup errors from the daemon.
 
 If ⌘⇧2 does nothing, check that the daemon is running:
@@ -57,14 +55,19 @@ If it isn't, re-run the installer.
 ```bash
 launchctl bootout gui/$(id -u)/local.capture-text
 rm ~/Library/LaunchAgents/local.capture-text.plist
-rm ~/.local/bin/capture-text ~/.local/bin/capture-text-ocr ~/.local/bin/capture-text-daemon
+rm ~/.local/bin/capture-text-daemon
+```
+
+If you installed an earlier version, also remove its leftover files:
+
+```bash
+rm -f ~/.local/bin/capture-text ~/.local/bin/capture-text-ocr
+rm -rf "$HOME/Library/Services/Capture Text.workflow"
 ```
 
 Then remove **capture-text-daemon** from Screen & System Audio Recording in System Settings.
 
 ## Files
 
-- `capture-text`: the script. Takes the selection, runs OCR, and copies the text.
-- `capture-text-ocr.swift`: Apple Vision text recognition, compiled to `capture-text-ocr`.
-- `capture-text-daemon.swift`: registers ⌘⇧2 and runs `capture-text` on each press, compiled to `capture-text-daemon`.
+- `capture-text-daemon.swift`: registers ⌘⇧2, takes the selection with `screencapture`, reads the text with Apple Vision, copies it, and writes the log. Compiled to `capture-text-daemon`.
 - `install-capture-text.sh`: builds, installs, and starts the daemon.
