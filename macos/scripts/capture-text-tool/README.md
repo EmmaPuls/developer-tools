@@ -35,11 +35,13 @@ Until this is granted, selections come back blank and nothing is copied.
 
 Press Esc during the selection to cancel. Pressing ⌘⇧2 again while a capture is in progress does nothing.
 
+When the daemon starts (at login, and after each install), it loads the text recognizer in the background. The first time a new build runs this can take up to about a minute. Nothing is copied during that step. A capture started before it finishes can take as long as the load still needs, so wait a minute after installing before the first capture.
+
 ## Troubleshooting
 
 Timings and errors are logged to:
 
-- `~/Library/Logs/capture-text.log`: one entry per capture, with selection size, line count, and OCR time. The file keeps the last 500 lines.
+- `~/Library/Logs/capture-text.log`: one entry per capture, with selection size, line count, and OCR time. Each start also logs a `warmup ms=` line for the background load. The file keeps the last 500 lines.
 - `~/Library/Logs/capture-text-daemon.log`: startup errors from the daemon.
 
 If ⌘⇧2 does nothing, check that the daemon is running:
