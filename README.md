@@ -119,6 +119,25 @@ dt rovo login
 - **Special `login` subcommand**: Handles authentication and launches rovodev
 - Preserves all original `rovo.sh` behavior
 
+### Skills - Manage Claude Skills
+```bash
+dt skills                                  # List all skills: on/off, model-invocable, where they live
+dt skills list --json                      # Machine-readable
+dt skills list --repo ~/code/other-repo    # Also show another repo's project skills
+dt skills disable unslop                   # Turn a global skill off (reversible)
+dt skills enable unslop
+dt skills install owner/repo --off         # Install from GitHub, disabled
+dt skills install https://host/x.git --path skills/foo
+dt skills install ./my-skill --on          # Install from a local folder, enabled
+```
+
+**How it works:**
+- Skills are found in `~/.claude/skills` (global), `~/.claude/skills/synced` (claude.ai synced), `.claude/skills` in the current git repo (project) and installed plugins
+- Disabling sets `"skillOverrides": {"name": "off"}` in `~/.claude/settings.json`; skill files are never touched and other settings are preserved
+- **Project and plugin skills are shown as `[locked]`** and can't be toggled here
+- `install` without `--on`/`--off` asks interactively; it refuses to overwrite without `--force`
+- Respects `CLAUDE_CONFIG_DIR`
+
 ## 🧪 Safe Testing with Dry-Run
 
 All destructive operations support `--dry-run` for safe testing:
