@@ -27,7 +27,7 @@ agent:
 # Session management settings
 sessions:
   # Directory where session data is stored
-  persistenceDir: /Users/epuls/.rovodev/sessions
+  persistenceDir: /Users/<username>/.rovodev/sessions
   # (Experimental) When enabled, Rovo Dev may warn and offer to switch your
   # workspace git state (branch/commit) to match the session checkpoint when
   # restoring or switching sessions.
@@ -83,14 +83,14 @@ console:
 # Logging and prompt collection settings
 logging:
   # Path to the log file
-  path: /Users/epuls/.rovodev/rovodev.log
+  path: /Users/<username>/.rovodev/rovodev.log
   # Enable collection of prompts for debugging and analysis
   enablePromptCollection: false
 
 # Model Context Protocol server configuration
 mcp:
   # Path to the MCP (Model Context Protocol) configuration file
-  mcpConfigPath: /Users/epuls/.rovodev/mcp.json
+  mcpConfigPath: /Users/<username>/.rovodev/mcp.json
   # List of allowed MCP server signatures
   allowedMcpServers: []
   # List of globally disabled MCP server signatures
@@ -160,7 +160,7 @@ sessionFeedback:
   lastFeedbackAsked: null
 
 atlassianBillingSite:
-  siteUrl: https://hello.atlassian.net
+  siteUrl: https://<your-site>.atlassian.net
 
 smartTasks:
   # Enable Smart Tasks discovery
@@ -170,5 +170,5 @@ smartTasks:
 
 # Event Hooks configuration. See /hooks command to list available events.
 eventHooks:
-  logFile: /Users/epuls/.rovodev/event_hooks.log
+  logFile: /Users/<username>/.rovodev/event_hooks.log
   events: []
