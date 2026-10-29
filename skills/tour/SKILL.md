@@ -10,7 +10,7 @@ If the topic is missing or too vague to pick a starting file, ask one short ques
 
 **1. Explore first.** Find the real code for the topic (LSP, then Grep). Read enough to explain the flow end to end. Never write a step for a line you haven't read.
 
-**2. Write `.tours/<kebab-case-topic>.tour`** (JSON). Keep it to 5-12 steps in execution or data-flow order, each pointing at one meaningful line.
+**2. Write `.tours/<kebab-case-topic>.tour`** (JSON). 
 
 ```json
 {
